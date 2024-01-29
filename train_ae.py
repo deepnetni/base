@@ -39,7 +39,7 @@ class Train(Engine):
         wav_est = self.stft.inverse(xk_est)
         # sisnr = loss_sisnr(wav, wav_est)
         snr = loss_snr(wav, wav_est)
-        loss = 0.03 * sisnr + mse_mag + mse_specs
+        loss = 0.03 * snr + mse_mag + mse_specs
 
         return {
             "loss": loss,
@@ -126,11 +126,11 @@ if __name__ == "__main__":
     init = cfg["config"]
     eng = Train(
         NSTrunk(
-            r"\\192.168.110.31\dataset\vae_dns",
+            cfg["dataset"]["train_dset"],
             "**/*_nearend.wav",
         ),
         NSTrunk(
-            r"\\192.168.110.31\dataset\vae_val",
+            cfg["dataset"]["valid_dset"],
             "**/*.wav",
         ),
         net=net,
