@@ -1,7 +1,5 @@
 import torch
-import torch.nn as nn
-from vae import VAE
-from AE import AE
+from models.AE import AE
 from stft import STFT
 from utils.audiolib import audioread, audiowrite
 from matplotlib import pyplot as plt
@@ -24,7 +22,7 @@ if __name__ == "__main__":
     if fs != 16000:
         mic = librosa.resample(mic, orig_sr=fs, target_sr=16000)
 
-    ckpt = torch.load(r"D:\pcharm\ae\checkpoints\best.pth")
+    ckpt = torch.load(r"D:\pcharm\ae_snr\checkpoints\best.pth")
     net.load_state_dict(ckpt)
     net.eval()
     mic = torch.from_numpy(mic).float()[None, :]

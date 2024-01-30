@@ -1,8 +1,8 @@
 import torch
 
 from utils.Engine import Engine
-from utils.losses import loss_compressed_mag, loss_sisnr, loss_snr
-from AE import AE
+from utils.losses import loss_compressed_mag, loss_sisnr
+from models.AE import AE
 from utils.ini_opts import read_ini
 from utils.trunk import NSTrunk
 from torch.utils.data import DataLoader
@@ -37,13 +37,13 @@ class Train(Engine):
 
         wav = self.stft.inverse(xk)
         wav_est = self.stft.inverse(xk_est)
-        # sisnr = loss_sisnr(wav, wav_est)
-        snr = loss_snr(wav, wav_est)
-        loss = 0.03 * snr + mse_mag + mse_specs
+        sisnr = loss_sisnr(wav, wav_est)
+        # snr = loss_snr(wav, wav_est)
+        loss = 0.03 * sisnr + mse_mag + mse_specs
 
         return {
             "loss": loss,
-            "snr": snr.detach(),
+            "si_snr": sisnr.detach(),
             "mse_mag_loss": mse_mag.detach(),
             "mse_specs_loss": mse_specs.detach(),
         }

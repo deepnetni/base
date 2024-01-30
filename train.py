@@ -2,7 +2,7 @@ import torch
 
 from utils.Engine import Engine
 from utils.losses import loss_compressed_mag, loss_sisnr
-from vae import VAE
+from models.VAE import VAE
 from utils.ini_opts import read_ini
 from utils.trunk import NSTrunk
 from torch.utils.data import DataLoader
