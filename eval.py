@@ -30,6 +30,7 @@ if __name__ == "__main__":
 
     with torch.no_grad():
         gen, inp = net(xk)
+
     inp_spec = spec(inp.detach())
     gen_spec = spec(gen.detach())
     plt.subplot(211)

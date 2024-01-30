@@ -5,6 +5,7 @@ Taken from https://github.com/facebookresearch/denoiser/blob/master/scripts/matl
 Authors
  * adiyoss (https://github.com/adiyoss)
 """
+import warnings
 
 from scipy.linalg import toeplitz
 from tqdm import tqdm
@@ -90,7 +91,11 @@ def lpcoeff(speech_frame, model_order):
         else:
             a_past = a[:i]
             sum_term = np.sum(a_past * np.array(R[i:0:-1]))
-        rcoeff[i] = (R[i + 1] - sum_term) / E[i]
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore", message="invalid value encountered in scalar divide"
+            )
+            rcoeff[i] = (R[i + 1] - sum_term) / E[i]
         a[i] = rcoeff[i]
         if i > 0:
             a[:i] = a_past[:i] - rcoeff[i] * a_past[::-1]
@@ -411,18 +416,23 @@ def llr(ref_wav, deg_wav, srate):
         # to compute the LLR measure
         R_clean, Ref_clean, A_clean = lpcoeff(clean_frame, P)
         R_processed, Ref_processed, A_processed = lpcoeff(processed_frame, P)
+
         A_clean = A_clean[None, :]
         A_processed = A_processed[None, :]
 
         # (3) Compute the LLR measure
         numerator = A_processed.dot(toeplitz(R_clean)).dot(A_processed.T)
+        # ARA.^T
         denominator = A_clean.dot(toeplitz(R_clean)).dot(A_clean.T)
 
-        if (numerator / denominator) <= 0:
-            print(f"Numerator: {numerator}")
-            print(f"Denominator: {denominator}")
-
-        log_ = np.log(numerator / denominator)
+        # if (numerator / denominator) <= 0:
+        #     print(f"Numerator: {numerator}")
+        #     print(f"Denominator: {denominator}")
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore", message="invalid value encountered in log"
+            )
+            log_ = np.log(numerator / denominator)
         distortion.append(np.squeeze(log_))
         start += int(skiprate)
     return np.nan_to_num(np.array(distortion))

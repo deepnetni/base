@@ -116,16 +116,16 @@ class Train(Engine):
         sisnr = self._si_snr(clean, enh)
         sisnr = np.mean(sisnr)
 
-        # pesq = self._pesq(
-        #     clean.cpu().detach().numpy(),
-        #     enh.cpu().detach().numpy(),
-        #     fs=16000,
-        #     norm=False,
-        # )
-        # pesq = np.mean(pesq)
+        pesq = self._pesq(
+            clean.cpu().detach().numpy(),
+            enh.cpu().detach().numpy(),
+            fs=16000,
+            norm=False,
+        )
+        pesq = np.mean(pesq)
         composite = self._eval(clean, enh, 16000)
         composite = {k: np.mean(v) for k, v in composite.items()}
-        pesq = composite.pop("pesq")
+        # pesq = composite.pop("pesq")
 
         stoi = self._stoi(
             clean.cpu().detach().numpy(),
@@ -136,7 +136,7 @@ class Train(Engine):
 
         score = (pesq - 1) / 3.5 + stoi
 
-        state = {"score": score, "pesq": pesq, "stoi": stoi, "sisnr": sisnr}
+        state = {"score": score, "pesq_": pesq, "stoi": stoi, "sisnr": sisnr}
         return dict(state, **composite)
 
     def _valid_each_epoch(self, epoch):
@@ -163,7 +163,7 @@ class Train(Engine):
             metric_dict = self.valid_fn(clean[:, : enh.shape[-1]], enh)
             if draw is True:
                 self._draw_spectrogram(
-                    epoch, xk, out, clean_xk, titles={"noisy", "enh", "clean"}
+                    epoch, xk, out, clean_xk, titles=("noisy", "enh", "clean")
                 )
                 draw = False
 
@@ -192,7 +192,7 @@ if __name__ == "__main__":
         ),
         net=net,
         batch_sz=12,
-        # valid_first=True,
+        valid_first=False,
         **init,
     )
     print(eng)

@@ -190,13 +190,16 @@ class Engine(object):
         content += "=" * 60 + "\n"
         content += f"{'ckpt':<{ncol}}: {self.ckpt_file}\n"
         content += f"{'Total':<{ncol}}: {total_sz/1024**2:.3f}MB\n"
-        content += f"{'nTotal':<{ncol}}: {total:<{ncol},d}, "
+        content += f"{'nTotal':<{ncol}}: {total:<{ncol},d}\n"
         content += f"nTrainable: {trainable: <{ncol},d}, "
+        content += f"nNon-Trainable: {total-trainable: <{ncol},d}\n"
+
         try:
             flops = self._net_flops()
             content += f"FLOPS: {flops / 1024**3:.3f}G\n"
         except NotImplementedError:
-            content += "\n"
+            # content += "\n"
+            pass
 
         content += "=" * 60
         return content
