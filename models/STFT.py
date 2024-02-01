@@ -14,7 +14,7 @@ class STFT(nn.Module):
         self.hop_length = hop_length
         self.forward_transform = None
 
-        filename = "window320w512.txt"  ###### D:\\JMCheng\\RT_16k_DNS_exp_new\\window320w512.txt
+        filename = "config/window320w512.txt"  ###### D:\\JMCheng\\RT_16k_DNS_exp_new\\window320w512.txt
         new_window = np.zeros(512)
         count = 0
 

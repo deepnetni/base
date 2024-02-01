@@ -6,7 +6,7 @@ from models.VAE import VAE
 from utils.ini_opts import read_ini
 from utils.trunk import NSTrunk
 from torch.utils.data import DataLoader
-from stft import STFT
+from models.STFT import STFT
 from utils.record import REC
 from tqdm import tqdm
 from typing import Dict

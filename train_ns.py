@@ -10,7 +10,7 @@ from models.AE import AE
 from utils.ini_opts import read_ini
 from utils.trunk import NSTrunk
 from utils.record import REC
-from stft import STFT
+from models.STFT import STFT
 from tqdm import tqdm
 from typing import Dict
 from models.APC_SNR.apc_snr import APC_SNR_multi_filter
@@ -123,8 +123,8 @@ class Train(Engine):
             norm=False,
         )
         pesq = np.mean(pesq)
-        composite = self._eval(clean, enh, 16000)
-        composite = {k: np.mean(v) for k, v in composite.items()}
+        # composite = self._eval(clean, enh, 16000)
+        # composite = {k: np.mean(v) for k, v in composite.items()}
         # pesq = composite.pop("pesq")
 
         stoi = self._stoi(
@@ -137,7 +137,7 @@ class Train(Engine):
         score = (pesq - 1) / 3.5 + stoi
 
         state = {"score": score, "pesq_": pesq, "stoi": stoi, "sisnr": sisnr}
-        return dict(state, **composite)
+        return dict(state)
 
     def _valid_each_epoch(self, epoch):
         metric_rec = REC()
@@ -175,9 +175,9 @@ class Train(Engine):
 
 
 if __name__ == "__main__":
-    cfg = read_ini("config/config.ini")
+    cfg = read_ini("config/config_dpcrn.ini")
 
-    net = DPCRN_Model_new()
+    net = DPCRN_Model_new(use_ae=True)
     init = cfg["config"]
     eng = Train(
         NSTrunk(
