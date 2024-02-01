@@ -1,6 +1,6 @@
 import torch
 from models.AE import AE
-from stft import STFT
+from models.STFT import STFT
 from utils.audiolib import audioread, audiowrite
 from matplotlib import pyplot as plt
 import librosa
@@ -17,7 +17,7 @@ def spec(xk):
 if __name__ == "__main__":
     net = AE()
     stft = STFT(filter_length=512, hop_length=320)
-    mic, fs = audioread(r"\\192.168.110.31\dataset\dns_to_liang\1_nearend.wav")
+    mic, fs = audioread(r"\\192.168.110.31\dataset\dns_to_wang\1_nearend.wav")
     # mic, fs = audioread(r"D:\dset_test\a.wav")
     if fs != 16000:
         mic = librosa.resample(mic, orig_sr=fs, target_sr=16000)
