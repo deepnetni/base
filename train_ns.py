@@ -136,7 +136,7 @@ class Train(Engine):
 
         score = (pesq - 1) / 3.5 + stoi
 
-        state = {"score": score, "pesq_": pesq, "stoi": stoi, "sisnr": sisnr}
+        state = {"score": score, "pesq": pesq, "stoi": stoi, "sisnr": sisnr}
         return dict(state)
 
     def _valid_each_epoch(self, epoch):

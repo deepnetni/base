@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 from models.AE import AE
+from einops.layers.torch import Rearrange
 
 
 class DPRNN_Block(nn.Module):
@@ -170,12 +171,18 @@ class DPCRN_Model_new(nn.Module):
         if use_ae:
             # self.ae_encoder = AE_BLK(r"D:\pcharm\AE\checkpoints\best.pth")
             self.ae_encoder = AE_BLK("/home/deepni/tfb/AE_SNR/checkpoints/best.pth")
+            # self.ae_conv = nn.Sequential(
+            #     nn.Conv2d(
+            #         in_channels=1, out_channels=128, kernel_size=1, stride=1, padding=0
+            #     ),
+            #     nn.BatchNorm2d(128),
+            #     nn.LeakyReLU(negative_slope=0.3),
+            # )
             self.ae_conv = nn.Sequential(
-                nn.Conv2d(
-                    in_channels=1, out_channels=128, kernel_size=1, stride=1, padding=0
-                ),
+                nn.Linear(in_features=64, out_features=64 * 128),
+                Rearrange("b 1 t (c f)-> b c t f", c=128),
+                nn.Conv2d(in_channels=128, out_channels=128, kernel_size=1, stride=1),
                 nn.BatchNorm2d(128),
-                nn.LeakyReLU(negative_slope=0.3),
             )
             self.ae_post_conv = nn.Sequential(
                 nn.Conv2d(
@@ -331,7 +338,7 @@ class DPCRN_Model_new(nn.Module):
 if __name__ == "__main__":
     inputs = torch.randn(16, 2, 100, 257)
 
-    Model = DPCRN_Model_new()
+    Model = DPCRN_Model_new(True)
 
     enh_real = Model(inputs)
 

@@ -10,7 +10,7 @@ from typing import Optional, Tuple
 from .audiolib import audioread
 from .logger import get_logger
 
-from stft import STFT
+from models.STFT import STFT
 
 
 class NSTrunk(Dataset):

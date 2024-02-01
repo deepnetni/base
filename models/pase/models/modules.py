@@ -9,10 +9,7 @@ import numpy as np
 import json
 import os
 
-# pip install git+https://github.com/salesforce/pytorch-qrnn
-# pip install git+https://github.com/santi-pdp/ahoproc_tools.git
-# pip install git+https://github.com/detly/gammatone
-# pip install git+https://github.com/pswietojanski/kaldi-io-for-python.git
+# pip install cupy pynvrtc git+https://github.com/salesforce/pytorch-qrnn
 from torchqrnn import QRNN
 
 
