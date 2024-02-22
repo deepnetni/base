@@ -54,7 +54,11 @@ class Engine(object):
         self.best_score = torch.finfo(torch.float32).min
 
         # checkpoints
-        self.info_dir = Path(info_dir) if info_dir != "" else Path(__file__).parent
+        self.info_dir = (
+            Path(info_dir)
+            if info_dir != ""
+            else Path(__file__).parent.parent / "trained"
+        )
         self.ckpt_dir = self.info_dir / name / "checkpoints"
         self.ckpt_file = self.ckpt_dir / "ckpt.pth"
         self.ckpt_best_file = self.ckpt_dir / "best.pth"
