@@ -10,7 +10,7 @@ import json
 import os
 
 # pip install cupy pynvrtc git+https://github.com/salesforce/pytorch-qrnn
-from torchqrnn import QRNN
+from .torchqrnn import QRNN
 
 
 def format_frontend_chunk(batch, device="cpu"):

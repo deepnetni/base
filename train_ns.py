@@ -177,9 +177,9 @@ class Train(Engine):
 
 
 if __name__ == "__main__":
-    cfg = read_ini("config/config_dpcrn.ini")
+    cfg = read_ini("config/config.ini")
 
-    net = DPCRN_Model_new(use_ae=True)
+    net = DPCRN_Model_new(use_ae=False)
     init = cfg["config"]
     eng = Train(
         NSTrunk(
