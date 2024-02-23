@@ -14,11 +14,13 @@ class STFT(nn.Module):
         nhop: int = 128,
         win: Union[str, np.ndarray] = "hann",
         nfft: Optional[int] = None,
+        center: bool = True,
     ):
         super().__init__()
 
         self.nframe = nframe
         self.nhop = nhop
+        self.pad = nframe // 2 if center else 0
 
         if nfft is None:
             # * rounding up to an exponential multiple of 2
@@ -83,7 +85,7 @@ class STFT(nn.Module):
             # * expand shape to (:, 1, :)
             x = torch.unsqueeze(x, dim=1)
 
-        x = F.pad(x, (self.nframe // 2, self.nframe // 2))
+        x = F.pad(x, (self.pad, self.pad))
         # * self.weight shape is [ 2 x (nfft//2 + 1), 1, nframe ]
         out_complex = F.conv1d(x, self.weight, stride=self.nhop)
 
@@ -109,7 +111,7 @@ class STFT(nn.Module):
         coff = F.conv_transpose1d(t, self.enframe, stride=self.nhop)
         outputs = outputs / (coff + 1e-8)
 
-        outputs_ = outputs[..., (self.nframe // 2) : -(self.nframe // 2)]
+        outputs_ = outputs[..., self.pad : -self.pad] if self.pad != 0 else outputs
         return outputs_
 
     def forward(self, x):
@@ -158,16 +160,27 @@ def verify_w_librosa():
 
 
 def verify_self():
-    inp = torch.randn(1, 16000)
-    net = STFT(512, 320, "hann")
+    from matplotlib import pyplot as plt
+
+    inp = torch.randn(1, 1600)
+    net = STFT(512, 320, "hann", center=False)
     xk = net.transform(inp)
     print(xk.shape)
     out = net.inverse(xk)
     print(out.shape)
-    print(torch.sum((inp - out) ** 2))
+    N = out.shape[-1]
+    print(torch.sum((inp[..., :N] - out) ** 2))
 
     out = net(inp)
-    print(torch.sum((inp - out) ** 2))
+    print(torch.sum((inp[..., :N] - out) ** 2))
+    diff = inp[0, :N] - out[0]
+    print(diff.shape)
+    plt.plot(inp[0, :N], alpha=0.3)
+    plt.plot(out[0], alpha=0.3)
+    plt.subplot()
+    plt.plot(diff[0])
+    plt.show()
+    # plt.savefig("a.svg")
 
 
 if __name__ == "__main__":
