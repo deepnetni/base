@@ -36,7 +36,7 @@ class Train(Engine):
             shuffle=True,
         )
 
-        self.stft = STFT(nframe=480, nhop=160, center=False).to(self.device)
+        self.stft = STFT(nframe=480, nhop=160, center=False, nfft=480).to(self.device)
 
         self.APC_criterion = APC_SNR_multi_filter(
             model_hop=128,
@@ -179,7 +179,7 @@ class Train(Engine):
 if __name__ == "__main__":
     cfg = read_ini("config/config.ini")
 
-    net = DPCRN_Model_new(use_ae=False)
+    net = DPCRN_Model_new()
     init = cfg["config"]
     eng = Train(
         NSTrunk(
@@ -193,8 +193,8 @@ if __name__ == "__main__":
             keymap=("nearend.wav", "target.wav"),
         ),
         net=net,
-        batch_sz=12,
-        valid_first=False,
+        batch_sz=6,
+        valid_first=True,
         **init,
     )
     print(eng)
