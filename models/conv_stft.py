@@ -112,7 +112,7 @@ class STFT(nn.Module):
         outputs = outputs / (coff + 1e-8)
 
         outputs_ = outputs[..., self.pad : -self.pad] if self.pad != 0 else outputs
-        return outputs_
+        return outputs_.squeeze(1)
 
     def forward(self, x):
         spec = self.transform(x)
@@ -123,11 +123,12 @@ class STFT(nn.Module):
 def verify_w_librosa():
     import librosa
 
-    nframe = 512
-    nhop = 128
+    nframe = 480
+    nhop = 160
+    nfft = 512
 
     inp = torch.randn(1, 16000)
-    net = STFT(nframe, nhop, "hann")
+    net = STFT(nframe, nhop, "hann", nfft=nfft)
     xk = net.transform(inp)
     print("xk", xk.shape)
     out = net.inverse(xk)
@@ -138,7 +139,7 @@ def verify_w_librosa():
     librosa_stft = librosa.stft(  # B,F,T
         np_inputs,
         win_length=nframe,
-        n_fft=nframe,
+        n_fft=nfft,
         hop_length=nhop,
         window="hann",
         center=True,
@@ -148,22 +149,24 @@ def verify_w_librosa():
         librosa_stft,
         hop_length=nhop,
         win_length=nframe,
-        n_fft=nframe,
+        n_fft=nfft,
         window="hann",
         center=True,
     )
 
-    librosa_stft = librosa_stft[None, ...]
+    librosa_stft = librosa_stft[None, ...]  # b,f,t
     xkk = np.stack([librosa_stft.real, librosa_stft.imag], axis=1)
-    xkk = xkk.transpose(-1, -2)
-    print(xkk.shape, xk.numpy().shape, np.sum((xk.numpy() - xkk) ** 2))
+
+    xkk = xkk.transpose(0, 1, 3, 2)  # b,2,t,f
+    print("xkk", xkk.shape)
+    print(xk.numpy().shape, np.sum((xk.numpy() - xkk) ** 2))
 
 
 def verify_self():
     from matplotlib import pyplot as plt
 
-    inp = torch.randn(1, 1600)
-    net = STFT(512, 320, "hann", center=False)
+    inp = torch.randn(1, 10000)
+    net = STFT(480, 160, "hann", center=False)
     xk = net.transform(inp)
     print(xk.shape)
     out = net.inverse(xk)
@@ -174,12 +177,10 @@ def verify_self():
     out = net(inp)
     print(torch.sum((inp[..., :N] - out) ** 2))
     diff = inp[0, :N] - out[0]
-    print(diff.shape)
-    plt.plot(inp[0, :N], alpha=0.3)
-    plt.plot(out[0], alpha=0.3)
-    plt.subplot()
-    plt.plot(diff[0])
-    plt.show()
+    # plt.plot(inp[0, :N], alpha=0.3)
+    # plt.plot(out[0], alpha=0.3)
+    # plt.plot(diff[0])
+    # plt.show()
     # plt.savefig("a.svg")
 
 

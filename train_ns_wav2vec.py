@@ -13,9 +13,10 @@ from models.conv_stft import STFT
 from tqdm import tqdm
 from typing import Dict
 from models.APC_SNR.apc_snr import APC_SNR_multi_filter
-from models.DPCRN import DPCRN_Model_new
+from models.DPCRN_wav2vec import DPCRN_Model_new
 
 # from models.pase.models.frontend import wf_builder
+import fairseq
 
 
 class Train(Engine):
@@ -35,8 +36,15 @@ class Train(Engine):
             pin_memory=True,
             shuffle=True,
         )
+        cp_path = "/home/deepnetni/Downloads/wav2vec_large.pt"
+        model, cfg, task = fairseq.checkpoint_utils.load_model_ensemble_and_task(
+            {cp_path: None}
+        )
+        self.wav2vec = model[0]
+        self.wav2vec.to(self.device).eval()
 
-        self.stft = STFT(nframe=480, nhop=160, center=False).to(self.device)
+        self.stft = STFT(nframe=480, nhop=160, center=False, nfft=480).to(self.device)
+        self.stft.eval()
 
         self.APC_criterion = APC_SNR_multi_filter(
             model_hop=128,
@@ -94,9 +102,12 @@ class Train(Engine):
             noisy = noisy.to(self.device)  # b,c,t,f
             clean = clean.to(self.device)  # b,c,t,f
             xk = self.stft.transform(noisy)
+            z = self.wav2vec.feature_extractor(noisy)
+            # c = self.wav2vec.feature_aggregator(z)
+            z = z[:, None, ...].permute(0, 1, 3, 2)
 
             self.optimizer.zero_grad()
-            out = self.net(xk)
+            out = self.net(xk, z)
             enh = self.stft.inverse(out)
             loss_dict = self.loss_fn(clean[:, : enh.shape[-1]], enh)
 
@@ -158,8 +169,11 @@ class Train(Engine):
             clean = clean.to(self.device)  # b,c,t,f
             xk = self.stft.transform(noisy)
             clean_xk = self.stft.transform(clean)
+            z = self.wav2vec.feature_extractor(noisy)
+            # c = self.wav2vec.feature_aggregator(z)
+            z = z[:, None, ...].permute(0, 1, 3, 2)
 
-            out = self.net(xk)
+            out = self.net(xk, z)
             enh = self.stft.inverse(out)
 
             metric_dict = self.valid_fn(clean[:, : enh.shape[-1]], enh)
@@ -175,11 +189,24 @@ class Train(Engine):
 
         return metric_rec.state_dict()
 
+    def _net_flops(self) -> int:
+        from thop import profile
+        import copy
+
+        x = torch.randn(1, 2, 100, 241)
+        y = torch.randn(1, 1, 100, 512)
+        flops, _ = profile(
+            copy.deepcopy(self.net).cpu(),
+            inputs=(x, y),
+            verbose=False,
+        )
+        return flops
+
 
 if __name__ == "__main__":
-    cfg = read_ini("config/config.ini")
+    cfg = read_ini("config/config_dpcrn_wav2vec.ini")
 
-    net = DPCRN_Model_new(use_ae=False)
+    net = DPCRN_Model_new()
     init = cfg["config"]
     eng = Train(
         NSTrunk(
@@ -193,8 +220,8 @@ if __name__ == "__main__":
             keymap=("nearend.wav", "target.wav"),
         ),
         net=net,
-        batch_sz=12,
-        valid_first=False,
+        batch_sz=6,
+        valid_first=True,
         **init,
     )
     print(eng)

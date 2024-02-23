@@ -291,8 +291,11 @@ class Engine(object):
         self.net.load_state_dict(ckpt["net"])
 
     def _net_flops(self) -> int:
+        # from thop import profile
+        # import copy
         # x = torch.randn(1, 16000)
-        # flops = profile(copy.deepcopy(self.net), inputs=(x,), verbose=False)
+        # flops, _ = profile(copy.deepcopy(self.net), inputs=(x,), verbose=False)
+        # return flops
         raise NotImplementedError
 
     def _fit_each_epoch(self, epoch: int) -> Dict:
