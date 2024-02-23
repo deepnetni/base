@@ -6,7 +6,7 @@ from models.AE import AE
 from utils.ini_opts import read_ini
 from utils.trunk import NSTrunk
 from torch.utils.data import DataLoader
-from models.STFT import STFT
+from models.conv_stft import STFT
 from utils.record import REC
 from tqdm import tqdm
 from typing import Dict
@@ -30,7 +30,7 @@ class Train(Engine):
             shuffle=True,
         )
 
-        self.stft = STFT(filter_length=512, hop_length=320).to(self.device)
+        self.stft = STFT(nframe=512, nhop=256).to(self.device)
 
     def loss_fn(self, xk, xk_est) -> Dict:
         mse_mag, mse_specs = loss_compressed_mag(xk, xk_est)
@@ -59,7 +59,8 @@ class Train(Engine):
         )
         for noisy in pbar:
             noisy = noisy.to(self.device)  # b,c,t,f
-            xk = self.stft.transform(noisy)
+            xk = self.stft.transform(noisy)  # b,2,t,f
+
             self.optimizer.zero_grad()
             out = self.net(xk)
 
@@ -95,7 +96,7 @@ class Train(Engine):
             self.valid_loader,
             # ncols=120,
             leave=False,
-            desc=f"Epoch-{epoch}/{self.epochs}",
+            desc=f"Valid-{epoch}/{self.epochs}",
         )
 
         draw = True
@@ -107,9 +108,12 @@ class Train(Engine):
             out = self.net(xk)
 
             gen, xk = out
+
             metric_dict = self.valid_fn(xk, gen)
             if draw is True:
-                self._draw_spectrogram(epoch, xk, gen)
+                self._draw_spectrogram(
+                    epoch, xk, gen, titles=("inp", "reconst"), fs=16000
+                )
                 draw = False
 
             # record the loss
@@ -120,7 +124,7 @@ class Train(Engine):
 
 
 if __name__ == "__main__":
-    cfg = read_ini("config.ini")
+    cfg = read_ini("config/config_ae.ini")
 
     net = AE(in_features=257, latent_dim=64)
     init = cfg["config"]
@@ -133,8 +137,8 @@ if __name__ == "__main__":
             cfg["dataset"]["valid_dset"],
             "**/*.wav",
         ),
-        net=net,
         batch_sz=64,
+        net=net,
         **init,
     )
     print(eng)

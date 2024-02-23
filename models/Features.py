@@ -743,3 +743,8 @@ class DCT(torch.nn.Module):
             )
 
         return dct
+
+
+if __name__ == "__main__":
+
+    pass

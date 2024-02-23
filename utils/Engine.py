@@ -14,6 +14,7 @@ from itertools import repeat
 from joblib import Parallel, delayed
 from utils.metrics import *
 from utils.composite_metrics import eval_composite
+from utils.logger import get_logger
 from collections import Counter
 
 
@@ -27,6 +28,8 @@ def setup_seed(seed: int = 0):
 
 
 setup_seed()
+
+log = get_logger("eng", mode="console")
 
 
 class Engine(object):
@@ -69,8 +72,9 @@ class Engine(object):
         )  # create directory if not exists
 
         if resume is True:
-            assert self.ckpt_file.exists()
-            self._load_ckpt()
+            self._load_ckpt() if self.ckpt_file.exists() else log.warning(
+                f"ckpt file: {self.ckpt_file} is not existed."
+            )
 
         # tensorboard
         self.tfb_dir = self.info_dir / name / "tfb"
@@ -160,7 +164,7 @@ class Engine(object):
         """
         draw spectrogram with args
 
-        :param args: (xk, xk, ...)
+        :param args: (xk, xk, ...), xk with shape (b,2,t,f) or (2,t,f)
         :param kwargs: fs
         :return:
         """
@@ -179,6 +183,15 @@ class Engine(object):
 
             mag = (r**2 + i**2) ** 0.5
             spec = 10 * np.log10(mag**2 + 1e-10).transpose(1, 0)  # f,t
+
+            if fs != 0:
+                nbin = spec.shape[0]
+                ylabel = np.arange(
+                    0, fs // 2 + 1, 1000 if fs <= 16000 else 3000
+                )  # 1000, 2000, ..., Frequency
+                yticks = nbin * ylabel * 2 // fs
+                axi.set_yticks(yticks)
+                axi.set_yticklabels(ylabel)
 
             axi.set_title(title) if title is not None else None
             axi.imshow(spec, origin="lower", aspect="auto", cmap="jet")
