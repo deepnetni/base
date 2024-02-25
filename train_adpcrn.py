@@ -11,7 +11,7 @@ from utils.losses import loss_compressed_mag, loss_sisnr, loss_pmsqe
 from tqdm import tqdm
 from typing import Dict
 from models.APC_SNR.apc_snr import APC_SNR_multi_filter
-from models.ADPCRN import ADPCRN, ADPCRN_ATTN, DPCRN_AEC
+from models.ADPCRN import ADPCRN, ADPCRN_ATTN, DPCRN_AEC, ADPCRN_Dilated
 from models.conv_stft import STFT
 
 # from models.pase.models.frontend import wf_builder
@@ -66,7 +66,7 @@ class Train(Engine):
         return {
             "loss": loss,
             "pmsqe": loss_pmsqe.detach(),
-            "APC": loss_APC_SNR.detach(),
+            "apc_snr": loss_APC_SNR.detach(),
         }
 
         # sisnr_lv = loss_sisnr(clean, enh)
@@ -208,6 +208,9 @@ def parse():
     parser.add_argument(
         "--wfusion-ATT", help="fusion with the atten method", action="store_true"
     )
+    parser.add_argument(
+        "--wfusion-dilated", help="fusion with the atten method", action="store_true"
+    )
     parser.add_argument("-T", "--train", help="train mode", action="store_true")
     parser.add_argument("-P", "--predict", help="predict mode", action="store_true")
 
@@ -236,6 +239,17 @@ if __name__ == "__main__":
         cfg_fname = "config/config_adpcrn_w_fusion_att.ini"
         cfg = read_ini(cfg_fname)
         net = ADPCRN_ATTN(
+            nframe=512,
+            nhop=256,
+            nfft=512,
+            cnn_num=[16, 32, 64, 128],
+            stride=[2, 2, 1, 1],
+            rnn_hidden_num=128,
+        )
+    elif args.wfusion_dilated:
+        cfg_fname = "config/config_adpcrn_w_fusion_dilated.ini"
+        cfg = read_ini(cfg_fname)
+        net = ADPCRN_Dilated(
             nframe=512,
             nhop=256,
             nfft=512,
