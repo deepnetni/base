@@ -61,14 +61,27 @@ class Train(Engine):
 
     def loss_fn(self, clean: Tensor, enh: Tensor) -> Dict:
         # apc loss
-        # loss_APC_SNR, loss_pmsqe = self.APC_criterion(enh + 1e-8, clean + 1e-8)
-        # loss = 0.05 * loss_APC_SNR + loss_pmsqe  # + loss_pase
+        loss_APC_SNR, loss_pmsqe = self.APC_criterion(enh + 1e-8, clean + 1e-8)
+        loss = 0.05 * loss_APC_SNR + loss_pmsqe  # + loss_pase
+        return {
+            "loss": loss,
+            "pmsqe": loss_pmsqe.detach(),
+            "APC": loss_APC_SNR.detach(),
+        }
 
-        sisnr_lv = loss_sisnr(clean, enh)
-        specs_enh = self.stft.transform(enh)
-        specs_sph = self.stft.transform(clean)
-        mse_mag, mse_pha = loss_compressed_mag(specs_sph, specs_enh)
-        pmsq_score = loss_pmsqe(specs_sph, specs_enh)
+        # sisnr_lv = loss_sisnr(clean, enh)
+        # specs_enh = self.stft.transform(enh)
+        # specs_sph = self.stft.transform(clean)
+        # mse_mag, mse_pha = loss_compressed_mag(specs_sph, specs_enh)
+        # pmsq_score = loss_pmsqe(specs_sph, specs_enh)
+        # loss = 0.05 * sisnr_lv + mse_pha + mse_mag + pmsq_score
+        # return {
+        #     "loss": loss,
+        #     "sisnr": sisnr_lv.detach(),
+        #     "mag": mse_mag.detach(),
+        #     "pha": mse_pha.detach(),
+        #     "pmsq": pmsq_score.detach(),
+        # }
 
         # pase loss
         # clean = clean.unsqueeze(1)
@@ -78,15 +91,6 @@ class Train(Engine):
         # enh_pase = self.pase(enh)
         # enh_pase = enh_pase.flatten(1)
         # loss_pase = F.mse_loss(clean_pase, enh_pase)
-        loss = 0.03 * sisnr_lv + mse_pha + mse_mag + pmsq_score
-
-        return {
-            "loss": loss,
-            "sisnr": sisnr_lv.detach(),
-            "mag": mse_mag.detach(),
-            "pha": mse_pha.detach(),
-            "pmsq": pmsq_score.detach(),
-        }
 
     def _fit_each_epoch(self, epoch):
         losses_rec = REC()
