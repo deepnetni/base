@@ -10,10 +10,11 @@ from utils.record import REC
 from tqdm import tqdm
 from typing import Dict
 from models.APC_SNR.apc_snr import APC_SNR_multi_filter
-from models.ADPCRN import ADPCRN
+from models.ADPCRN import ADPCRN, DPCRN_AEC
 from models.conv_stft import STFT
 
 # from models.pase.models.frontend import wf_builder
+import argparse
 
 
 class Train(Engine):
@@ -35,6 +36,7 @@ class Train(Engine):
         )
 
         self.stft = STFT(nframe=512, nhop=256).to(self.device)
+        self.stft.eval()
 
         self.APC_criterion = APC_SNR_multi_filter(
             model_hop=128,
@@ -161,9 +163,10 @@ class Train(Engine):
             metric_dict = self.valid_fn(sph[:, : enh.shape[-1]], enh, sce)
 
             if draw is True:
-                mxk = self.stft.transform(mic)
-                exk = self.stft.transform(enh)
-                sxk = self.stft.transform(sph)
+                with torch.no_grad():
+                    mxk = self.stft.transform(mic)
+                    exk = self.stft.transform(enh)
+                    sxk = self.stft.transform(sph)
                 self._draw_spectrogram(
                     epoch, mxk, exk, sxk, titles=("mic", "enh", "sph")
                 )
@@ -175,18 +178,60 @@ class Train(Engine):
 
         return metric_rec.state_dict()
 
+    def _net_flops(self) -> int:
+        from thop import profile
+        import copy
+
+        x = torch.randn(1, 16000)
+        flops, _ = profile(
+            copy.deepcopy(self.net).cpu(),
+            inputs=(x, x),
+            verbose=False,
+        )
+        return flops
+
+
+def parse():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--wo-SFP", help="f2f mode", action="store_true")
+    parser.add_argument("-T", "--train", help="train mode", action="store_true")
+    parser.add_argument("-P", "--predict", help="predict mode", action="store_true")
+
+    parser.add_argument("--ckpt", help="ckpt path", type=str)
+    parser.add_argument("--src", help="input directory", type=str)
+    parser.add_argument("--dst", help="predicting output directory", type=str)
+    args = parser.parse_args()
+    return args
+
 
 if __name__ == "__main__":
-    cfg = read_ini("config/config_adpcrn.ini")
+    args = parse()
 
-    net = ADPCRN(
-        nframe=512,
-        nhop=256,
-        nfft=512,
-        cnn_num=[16, 32, 64, 128],
-        stride=[2, 2, 1, 1],
-        rnn_hidden_num=128,
-    )
+    if args.wo_SFP:
+        cfg_fname = "config/config_adpcrn_wo_sfp.ini"
+        cfg = read_ini(cfg_fname)
+        net = DPCRN_AEC(
+            nframe=512,
+            nhop=256,
+            nfft=512,
+            cnn_num=[16, 32, 64, 128],
+            stride=[2, 2, 1, 1],
+            rnn_hidden_num=128,
+        )
+    else:
+        cfg_fname = "config/config_adpcrn.ini"
+        cfg = read_ini(cfg_fname)
+        net = ADPCRN(
+            nframe=512,
+            nhop=256,
+            nfft=512,
+            cnn_num=[16, 32, 64, 128],
+            stride=[2, 2, 1, 1],
+            rnn_hidden_num=128,
+        )
+
+    print("##", cfg_fname)
+
     init = cfg["config"]
     eng = Train(
         AECTrunk(

@@ -36,7 +36,7 @@ class Train(Engine):
             pin_memory=True,
             shuffle=True,
         )
-        cp_path = "/home/deepnetni/Downloads/wav2vec_large.pt"
+        cp_path = "/home/deepni/wav2vec_large.pt"
         model, cfg, task = fairseq.checkpoint_utils.load_model_ensemble_and_task(
             {cp_path: None}
         )
@@ -221,7 +221,7 @@ if __name__ == "__main__":
         ),
         net=net,
         batch_sz=6,
-        valid_first=True,
+        valid_first=False,
         **init,
     )
     print(eng)

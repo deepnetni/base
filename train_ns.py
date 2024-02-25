@@ -165,7 +165,7 @@ class Train(Engine):
             metric_dict = self.valid_fn(clean[:, : enh.shape[-1]], enh)
             if draw is True:
                 self._draw_spectrogram(
-                    epoch, xk, out, clean_xk, titles=("noisy", "enh", "clean")
+                    epoch, xk, out, clean_xk, titles=("noisy", "enh", "clean"), fs=16000
                 )
                 draw = False
 
