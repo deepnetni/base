@@ -7,10 +7,11 @@ from utils.Engine import Engine
 from utils.ini_opts import read_ini
 from utils.trunk import AECTrunk
 from utils.record import REC
+from utils.losses import loss_compressed_mag, loss_sisnr, loss_pmsqe
 from tqdm import tqdm
 from typing import Dict
 from models.APC_SNR.apc_snr import APC_SNR_multi_filter
-from models.ADPCRN import ADPCRN, DPCRN_AEC
+from models.ADPCRN import ADPCRN, ADPCRN_ATTN, DPCRN_AEC
 from models.conv_stft import STFT
 
 # from models.pase.models.frontend import wf_builder
@@ -36,7 +37,7 @@ class Train(Engine):
         )
 
         self.stft = STFT(nframe=512, nhop=256).to(self.device)
-        self.stft.eval()
+        # self.stft.eval()
 
         self.APC_criterion = APC_SNR_multi_filter(
             model_hop=128,
@@ -60,7 +61,14 @@ class Train(Engine):
 
     def loss_fn(self, clean: Tensor, enh: Tensor) -> Dict:
         # apc loss
-        loss_APC_SNR, loss_pmsqe = self.APC_criterion(enh + 1e-8, clean + 1e-8)
+        # loss_APC_SNR, loss_pmsqe = self.APC_criterion(enh + 1e-8, clean + 1e-8)
+        # loss = 0.05 * loss_APC_SNR + loss_pmsqe  # + loss_pase
+
+        sisnr_lv = loss_sisnr(clean, enh)
+        specs_enh = self.stft.transform(enh)
+        specs_sph = self.stft.transform(clean)
+        mse_mag, mse_pha = loss_compressed_mag(specs_sph, specs_enh)
+        pmsq_score = loss_pmsqe(specs_sph, specs_enh)
 
         # pase loss
         # clean = clean.unsqueeze(1)
@@ -70,15 +78,14 @@ class Train(Engine):
         # enh_pase = self.pase(enh)
         # enh_pase = enh_pase.flatten(1)
         # loss_pase = F.mse_loss(clean_pase, enh_pase)
-
-        # loss final
-        loss = 0.05 * loss_APC_SNR + loss_pmsqe  # + loss_pase
+        loss = 0.03 * sisnr_lv + mse_pha + mse_mag + pmsq_score
 
         return {
             "loss": loss,
-            "apc_snr": loss_APC_SNR.detach(),
-            "pmsqe": loss_pmsqe.detach(),
-            # "pase": loss_pase.detach(),
+            "sisnr": sisnr_lv.detach(),
+            "mag": mse_mag.detach(),
+            "pha": mse_pha.detach(),
+            "pmsq": pmsq_score.detach(),
         }
 
     def _fit_each_epoch(self, epoch):
@@ -102,7 +109,7 @@ class Train(Engine):
             loss = loss_dict["loss"]
             loss.backward()
 
-            torch.nn.utils.clip_grad_norm_(self.net.parameters(), 3, 2)
+            # torch.nn.utils.clip_grad_norm_(self.net.parameters(), 3, 2)
             self.optimizer.step()
 
             # record the loss
@@ -193,7 +200,10 @@ class Train(Engine):
 
 def parse():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--wo-SFP", help="f2f mode", action="store_true")
+    parser.add_argument("--wo-SFP", help="without SFP path mode", action="store_true")
+    parser.add_argument(
+        "--wfusion-ATT", help="fusion with the atten method", action="store_true"
+    )
     parser.add_argument("-T", "--train", help="train mode", action="store_true")
     parser.add_argument("-P", "--predict", help="predict mode", action="store_true")
 
@@ -211,6 +221,17 @@ if __name__ == "__main__":
         cfg_fname = "config/config_adpcrn_wo_sfp.ini"
         cfg = read_ini(cfg_fname)
         net = DPCRN_AEC(
+            nframe=512,
+            nhop=256,
+            nfft=512,
+            cnn_num=[16, 32, 64, 128],
+            stride=[2, 2, 1, 1],
+            rnn_hidden_num=128,
+        )
+    elif args.wfusion_ATT:
+        cfg_fname = "config/config_adpcrn_w_fusion_att.ini"
+        cfg = read_ini(cfg_fname)
+        net = ADPCRN_ATTN(
             nframe=512,
             nhop=256,
             nfft=512,

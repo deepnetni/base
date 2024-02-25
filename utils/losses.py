@@ -1,5 +1,47 @@
+from einops import rearrange
 import torch
 from torch import Tensor
+from models.PMSQE.pmsqe_asteroid import SingleSrcPMSQE
+
+
+def loss_pmsqe(sph_spec, est_spec, pad_mask=None):
+    """Perceptally-Motivated Speech Quality
+    Args:
+        `sph_spec` and `est_spec`: features in frequency-domain
+            with shape B,2,T,F
+        pad_mask: indicate the padding frames with shape B, T, 1 where 1 for valid frame.
+    """
+
+    def power(spec, freq_dim=-1):
+        # B,T,2F -> ((B,T,F), (B,T,F))(chunk) -> B,T,F,2(stack) -> B,T,F(sum)
+        return (
+            torch.stack(torch.chunk(spec, 2, dim=freq_dim), dim=-1).pow(2).sum(dim=-1)
+        )
+
+    if pad_mask is None:
+        pad_mask = torch.ones(
+            est_spec.shape[0], est_spec.shape[2], 1, device=est_spec.device
+        )
+
+    # b,2,t,f -> b,t,2f
+    sph_spec = rearrange(sph_spec, "b c t f->b t (c f)")
+    est_spec = rearrange(est_spec, "b c t f->b t (c f)")
+
+    power_sph_spec = power(sph_spec)
+    power_est_spec = power(est_spec)
+
+    # wD: Mean symmetric distortion.
+    # wDA: Mean asymmetric distortion.
+    # pmsq = PMSQE().cuda()
+    # wD, wDA = pmsq(power_est_spec, power_sph_spec, pad_mask)
+    # alpha = 0.1
+    # score = alpha * (wD + 0.309 * wDA)
+
+    pmsq = SingleSrcPMSQE(sample_rate=16000).cuda()
+    score = pmsq(power_est_spec, power_sph_spec, pad_mask)
+    score = score.mean()
+
+    return score
 
 
 def l2_norm(s: Tensor, keepdim=False):
