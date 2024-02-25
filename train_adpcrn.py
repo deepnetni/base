@@ -169,7 +169,8 @@ class Train(Engine):
             sph = sph.to(self.device)  # b,c,t,f
             sce = scenario.to(self.device)  # b,1
 
-            enh = self.net(mic, ref)
+            with torch.no_grad():
+                enh = self.net(mic, ref)
 
             metric_dict = self.valid_fn(sph[:, : enh.shape[-1]], enh, sce)
 

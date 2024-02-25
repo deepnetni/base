@@ -91,7 +91,7 @@ class ADPCRN(nn.Module):
                     nn.Sequential(
                         # ComplexConvTranspose2d(
                         ComplexGateConvTranspose2d(
-                            in_channels=2 * self.cnn_num[-1 - idx],  # skip_connection
+                            in_channels=3 * self.cnn_num[-1 - idx],  # skip_connection
                             out_channels=self.cnn_num[-1 - idx - 1],
                             kernel_size=(1, 5),
                             padding=(0, 2),
@@ -109,7 +109,7 @@ class ADPCRN(nn.Module):
                 self.decoder_l.append(
                     nn.Sequential(
                         ComplexGateConvTranspose2d(
-                            in_channels=2 * self.cnn_num[-1 - idx],  # skip_connection
+                            in_channels=3 * self.cnn_num[-1 - idx],  # skip_connection
                             out_channels=2,
                             kernel_size=(1, 5),
                             padding=(0, 2),
@@ -186,17 +186,19 @@ class ADPCRN(nn.Module):
             [specs_mic_real, specs_ref_real, specs_mic_imag, specs_ref_imag], dim=1
         )  # [B, 4, F, T]
 
-        spec = specs_mic
         spec_store = []
-        for idx, layer in enumerate(self.encoder_mic):
-            spec = layer(spec)
-            spec_store.append(spec)
+        spec = specs_mic
+        x = specs_mix
+        for idx, (lm, lr) in enumerate(zip(self.encoder_mic, self.encoder_rel)):
+            spec = lm(spec)
+            x = lr(x)  # x shape [B, C, T, F]
+            mx = complex_cat([spec, x], dim=1)
+            spec_store.append(mx)
 
         # feat = self.dilateds[0](feat)
 
-        x = specs_mix
-        for idx, layer in enumerate(self.encoder_rel):
-            x = layer(x)  # x shape [B, C, T, F]
+        # for idx, layer in enumerate(self.encoder_rel):
+        #     x = layer(x)  # x shape [B, C, T, F]
 
         # x = self.dilateds[1](x)
 
@@ -859,7 +861,7 @@ class ADPCRN_Dilated(nn.Module):
             spec = layer(spec)
             spec_store.append(spec)
 
-        # spec = self.dilateds[0](spec)
+        spec = self.dilateds[0](spec)
 
         x = specs_mix
         for idx, layer in enumerate(self.encoder_rel):
@@ -872,7 +874,7 @@ class ADPCRN_Dilated(nn.Module):
         x = complex_cat([spec, x], dim=1)
         x = self.encoder_fusion(x)
         # x = x + spec
-        x = self.dilateds[0](x)
+        # x = self.dilateds[0](x)
 
         x_r, x_i = torch.chunk(x, 2, dim=1)
 
