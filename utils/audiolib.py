@@ -159,11 +159,12 @@ def align_ref_to_mic(
     return d_ref
 
 
-def audioread(path, norm=False, sub_mean=False, start=0, stop=None, target_level=-25):
+def audioread(
+    path, sub_mean=False, start=0, stop=None, target_level: Optional[int] = None
+):
     """Function to read audio
     Args:
-        norm: bool, normalize the power of data to `target_level`;
-        target_level: int, -25 dB;
+        target_level: None,int, normalize the power of data to `target_level`, default None, could be -25 dB;
 
     Return:
         audio, fs
@@ -179,12 +180,12 @@ def audioread(path, norm=False, sub_mean=False, start=0, stop=None, target_level
         audio = audio - np.mean(audio, axis=0, keepdims=True)
 
     if len(audio.shape) == 1:  # mono
-        if norm:
+        if target_level is not None:
             audio = normalize(audio, target_level)
     else:  # multi-channel
         audio = audio.T  # TODO check T,2 -> 2,T
         audio = audio.sum(axis=0) / audio.shape[0]
-        if norm:
+        if target_level is not None:
             audio = normalize(audio, target_level)
 
     return audio, sample_rate

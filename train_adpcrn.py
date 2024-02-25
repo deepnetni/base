@@ -1,19 +1,17 @@
 import torch
 from torch import Tensor
 from torch.utils.data import DataLoader
-import torch.nn.functional as F
 import numpy as np
 
 from utils.Engine import Engine
-from models.AE import AE
 from utils.ini_opts import read_ini
-from utils.trunk import NSTrunk
+from utils.trunk import AECTrunk
 from utils.record import REC
-from models.conv_stft import STFT
 from tqdm import tqdm
 from typing import Dict
 from models.APC_SNR.apc_snr import APC_SNR_multi_filter
-from models.DPCRN import DPCRN_Model_new
+from models.ADPCRN import ADPCRN
+from models.conv_stft import STFT
 
 # from models.pase.models.frontend import wf_builder
 
@@ -36,7 +34,7 @@ class Train(Engine):
             shuffle=True,
         )
 
-        self.stft = STFT(nframe=480, nhop=160, center=False, nfft=480).to(self.device)
+        self.stft = STFT(nframe=512, nhop=256).to(self.device)
 
         self.APC_criterion = APC_SNR_multi_filter(
             model_hop=128,
@@ -86,19 +84,18 @@ class Train(Engine):
 
         pbar = tqdm(
             self.train_loader,
-            # ncols=120,
+            ncols=120,
             leave=True,
             desc=f"Epoch-{epoch}/{self.epochs}",
         )
-        for noisy, clean in pbar:
-            noisy = noisy.to(self.device)  # b,c,t,f
-            clean = clean.to(self.device)  # b,c,t,f
-            xk = self.stft.transform(noisy)
+        for mic, ref, sph, _ in pbar:
+            mic = mic.to(self.device)  # b,c,t,f
+            ref = ref.to(self.device)  # b,c,t,f
+            sph = sph.to(self.device)  # b,c,t,f
 
             self.optimizer.zero_grad()
-            out = self.net(xk)
-            enh = self.stft.inverse(out)
-            loss_dict = self.loss_fn(clean[:, : enh.shape[-1]], enh)
+            enh = self.net(mic, ref)
+            loss_dict = self.loss_fn(sph[:, : enh.shape[-1]], enh)
 
             loss = loss_dict["loss"]
             loss.backward()
@@ -112,12 +109,12 @@ class Train(Engine):
 
         return losses_rec.state_dict()
 
-    def valid_fn(self, clean: Tensor, enh: Tensor) -> Dict:
-        sisnr = self._si_snr(clean, enh)
+    def valid_fn(self, sph: Tensor, enh: Tensor, scenario: Tensor) -> Dict:
+        sisnr = self._si_snr(sph, enh)
         sisnr = np.mean(sisnr)
 
         pesq = self._pesq(
-            clean.cpu().detach().numpy(),
+            sph.cpu().detach().numpy(),
             enh.cpu().detach().numpy(),
             fs=16000,
             norm=False,
@@ -128,7 +125,7 @@ class Train(Engine):
         # pesq = composite.pop("pesq")
 
         stoi = self._stoi(
-            clean.cpu().detach().numpy(),
+            sph.cpu().detach().numpy(),
             enh.cpu().detach().numpy(),
             fs=16000,
         )
@@ -146,26 +143,29 @@ class Train(Engine):
 
         pbar = tqdm(
             self.valid_loader,
-            # ncols=120,
+            ncols=120,
             leave=False,
             desc=f"Valid-{epoch}/{self.epochs}",
         )
 
         draw = True
 
-        for noisy, clean in pbar:
-            noisy = noisy.to(self.device)  # b,c,t,f
-            clean = clean.to(self.device)  # b,c,t,f
-            xk = self.stft.transform(noisy)
-            clean_xk = self.stft.transform(clean)
+        for mic, ref, sph, scenario in pbar:
+            mic = mic.to(self.device)  # b,c,t,f
+            ref = ref.to(self.device)  # b,c,t,f
+            sph = sph.to(self.device)  # b,c,t,f
+            sce = scenario.to(self.device)  # b,1
 
-            out = self.net(xk)
-            enh = self.stft.inverse(out)
+            enh = self.net(mic, ref)
 
-            metric_dict = self.valid_fn(clean[:, : enh.shape[-1]], enh)
+            metric_dict = self.valid_fn(sph[:, : enh.shape[-1]], enh, sce)
+
             if draw is True:
+                mxk = self.stft.transform(mic)
+                exk = self.stft.transform(enh)
+                sxk = self.stft.transform(sph)
                 self._draw_spectrogram(
-                    epoch, xk, out, clean_xk, titles=("noisy", "enh", "clean")
+                    epoch, mxk, exk, sxk, titles=("mic", "enh", "sph")
                 )
                 draw = False
 
@@ -177,23 +177,32 @@ class Train(Engine):
 
 
 if __name__ == "__main__":
-    cfg = read_ini("config/config.ini")
+    cfg = read_ini("config/config_adpcrn.ini")
 
-    net = DPCRN_Model_new()
+    net = ADPCRN(
+        nframe=512,
+        nhop=256,
+        nfft=512,
+        cnn_num=[16, 32, 64, 128],
+        stride=[2, 2, 1, 1],
+        rnn_hidden_num=128,
+    )
     init = cfg["config"]
     eng = Train(
-        NSTrunk(
+        AECTrunk(
             cfg["dataset"]["train_dset"],
-            "**/*_nearend.wav",
-            keymap=("nearend.wav", "target.wav"),
+            patten="**/*mic.wav",
+            keymap=("mic", "ref", "sph"),
+            align=True,
         ),
-        NSTrunk(
+        AECTrunk(
             cfg["dataset"]["valid_dset"],
-            "**/*_nearend.wav",
-            keymap=("nearend.wav", "target.wav"),
+            patten="**/*mic.wav",
+            keymap=("mic", "ref", "sph"),
+            align=True,
         ),
         net=net,
-        batch_sz=6,
+        batch_sz=4,
         valid_first=False,
         **init,
     )

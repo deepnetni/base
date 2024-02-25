@@ -8,6 +8,12 @@ from scipy.signal import get_window
 
 
 class STFT(nn.Module):
+    """
+    return
+    ------
+    B,2,T,F
+    """
+
     def __init__(
         self,
         nframe: int = 512,

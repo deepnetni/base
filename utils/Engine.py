@@ -1,21 +1,22 @@
-import copy
 import os
-
-import matplotlib.pyplot as plt
-import torch
-import torch.nn as nn
 import random
-from torch.optim import Optimizer, lr_scheduler
-from torch.utils.tensorboard.writer import SummaryWriter
+import re
+from collections import Counter
+from itertools import repeat
 from pathlib import Path
 from typing import Dict
+
+import matplotlib.pyplot as plt
 import numpy as np
-from itertools import repeat
+import torch
+import torch.nn as nn
 from joblib import Parallel, delayed
-from utils.metrics import *
+from torch.optim import Optimizer, lr_scheduler
+from torch.utils.tensorboard.writer import SummaryWriter
+
 from utils.composite_metrics import eval_composite
 from utils.logger import get_logger
-from collections import Counter
+from utils.metrics import *
 
 
 def setup_seed(seed: int = 0):
@@ -57,11 +58,16 @@ class Engine(object):
         self.best_score = torch.finfo(torch.float32).min
 
         # checkpoints
-        self.info_dir = (
-            Path(info_dir)
-            if info_dir != ""
-            else Path(__file__).parent.parent / "trained"
-        )
+        if os.path.isabs(info_dir):  # abspath
+            self.info_dir = Path(info_dir)
+        else:  # relative path
+            self.info_dir = (
+                Path(__file__).parent.parent / info_dir
+                if info_dir != ""
+                else Path(__file__).parent.parent / "trained"
+            )
+        log.info(f"info dirname: {self.info_dir}")
+
         self.ckpt_dir = self.info_dir / name / "checkpoints"
         self.ckpt_file = self.ckpt_dir / "ckpt.pth"
         self.ckpt_best_file = self.ckpt_dir / "best.pth"
