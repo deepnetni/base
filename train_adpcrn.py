@@ -11,7 +11,7 @@ from utils.losses import loss_compressed_mag, loss_sisnr, loss_pmsqe
 from tqdm import tqdm
 from typing import Dict
 from models.APC_SNR.apc_snr import APC_SNR_multi_filter
-from models.ADPCRN import ADPCRN, ADPCRN_ATTN, DPCRN_AEC, ADPCRN_Dilated
+from models.ADPCRN import ADPCRN, ADPCRN_ATTN, DPCRN_AEC, ADPCRN_Dilated, ADPCRN_MS
 from models.conv_stft import STFT
 
 # from models.pase.models.frontend import wf_builder
@@ -39,13 +39,13 @@ class Train(Engine):
         self.stft = STFT(nframe=512, nhop=256).to(self.device)
         # self.stft.eval()
 
-        self.APC_criterion = APC_SNR_multi_filter(
-            model_hop=128,
-            model_winlen=512,
-            mag_bins=256,
-            theta=0.01,
-            hops=[8, 16, 32, 64],
-        ).to(self.device)
+        # self.APC_criterion = APC_SNR_multi_filter(
+        #     model_hop=128,
+        #     model_winlen=512,
+        #     mag_bins=256,
+        #     theta=0.01,
+        #     hops=[8, 16, 32, 64],
+        # ).to(self.device)
 
         # self.pase = wf_builder("config/frontend/PASE+.cfg").eval()
         # self.pase.load_pretrained(
@@ -61,27 +61,27 @@ class Train(Engine):
 
     def loss_fn(self, clean: Tensor, enh: Tensor) -> Dict:
         # apc loss
-        loss_APC_SNR, loss_pmsqe = self.APC_criterion(enh + 1e-8, clean + 1e-8)
-        loss = 0.05 * loss_APC_SNR + loss_pmsqe  # + loss_pase
-        return {
-            "loss": loss,
-            "pmsqe": loss_pmsqe.detach(),
-            "apc_snr": loss_APC_SNR.detach(),
-        }
-
-        # sisnr_lv = loss_sisnr(clean, enh)
-        # specs_enh = self.stft.transform(enh)
-        # specs_sph = self.stft.transform(clean)
-        # mse_mag, mse_pha = loss_compressed_mag(specs_sph, specs_enh)
-        # pmsq_score = loss_pmsqe(specs_sph, specs_enh)
-        # loss = 0.05 * sisnr_lv + mse_pha + mse_mag + pmsq_score
+        # loss_APC_SNR, loss_pmsqe = self.APC_criterion(enh + 1e-8, clean + 1e-8)
+        # loss = 0.05 * loss_APC_SNR + loss_pmsqe  # + loss_pase
         # return {
         #     "loss": loss,
-        #     "sisnr": sisnr_lv.detach(),
-        #     "mag": mse_mag.detach(),
-        #     "pha": mse_pha.detach(),
-        #     "pmsq": pmsq_score.detach(),
+        #     "pmsqe": loss_pmsqe.detach(),
+        #     "apc_snr": loss_APC_SNR.detach(),
         # }
+
+        sisnr_lv = loss_sisnr(clean, enh)
+        specs_enh = self.stft.transform(enh)
+        specs_sph = self.stft.transform(clean)
+        mse_mag, mse_pha = loss_compressed_mag(specs_sph, specs_enh)
+        # pmsq_score = loss_pmsqe(specs_sph, specs_enh)
+        loss = 0.05 * sisnr_lv + mse_pha + mse_mag  # + pmsq_score
+        return {
+            "loss": loss,
+            "sisnr": sisnr_lv.detach(),
+            "mag": mse_mag.detach(),
+            "pha": mse_pha.detach(),
+            # "pmsq": pmsq_score.detach(),
+        }
 
         # pase loss
         # clean = clean.unsqueeze(1)
@@ -210,6 +210,9 @@ def parse():
         "--wfusion-ATT", help="fusion with the atten method", action="store_true"
     )
     parser.add_argument(
+        "--wfusion-MS", help="fusion with the atten method", action="store_true"
+    )
+    parser.add_argument(
         "--wfusion-dilated", help="fusion with the atten method", action="store_true"
     )
     parser.add_argument("-T", "--train", help="train mode", action="store_true")
@@ -225,7 +228,7 @@ def parse():
 if __name__ == "__main__":
     args = parse()
 
-    if args.wo_SFP:
+    if args.wo_SFP:  # 31
         cfg_fname = "config/config_adpcrn_wo_sfp.ini"
         cfg = read_ini(cfg_fname)
         net = DPCRN_AEC(
@@ -236,7 +239,18 @@ if __name__ == "__main__":
             stride=[2, 2, 1, 1],
             rnn_hidden_num=128,
         )
-    elif args.wfusion_ATT:
+    elif args.wfusion_MS:  # 212
+        cfg_fname = "config/config_adpcrn_w_fusion_ms.ini"
+        cfg = read_ini(cfg_fname)
+        net = ADPCRN_MS(
+            nframe=512,
+            nhop=256,
+            nfft=512,
+            cnn_num=[16, 32, 64, 128],
+            stride=[2, 2, 1, 1],
+            rnn_hidden_num=128,
+        )
+    elif args.wfusion_ATT:  # 212
         cfg_fname = "config/config_adpcrn_w_fusion_att.ini"
         cfg = read_ini(cfg_fname)
         net = ADPCRN_ATTN(
@@ -247,7 +261,7 @@ if __name__ == "__main__":
             stride=[2, 2, 1, 1],
             rnn_hidden_num=128,
         )
-    elif args.wfusion_dilated:
+    elif args.wfusion_dilated:  # 212
         cfg_fname = "config/config_adpcrn_w_fusion_dilated.ini"
         cfg = read_ini(cfg_fname)
         net = ADPCRN_Dilated(
@@ -258,7 +272,7 @@ if __name__ == "__main__":
             stride=[2, 2, 1, 1],
             rnn_hidden_num=128,
         )
-    else:
+    else:  # 212  baseline
         cfg_fname = "config/config_adpcrn.ini"
         cfg = read_ini(cfg_fname)
         net = ADPCRN(
