@@ -37,7 +37,7 @@ class Train(Engine):
         )
 
         self.stft = STFT(nframe=512, nhop=256).to(self.device)
-        # self.stft.eval()
+        self.stft.eval()
 
         # self.APC_criterion = APC_SNR_multi_filter(
         #     model_hop=128,
@@ -70,8 +70,9 @@ class Train(Engine):
         # }
 
         sisnr_lv = loss_sisnr(clean, enh)
-        specs_enh = self.stft.transform(enh)
-        specs_sph = self.stft.transform(clean)
+        with torch.no_grad():
+            specs_enh = self.stft.transform(enh)
+            specs_sph = self.stft.transform(clean)
         mse_mag, mse_pha = loss_compressed_mag(specs_sph, specs_enh)
         # pmsq_score = loss_pmsqe(specs_sph, specs_enh)
         loss = 0.05 * sisnr_lv + mse_pha + mse_mag  # + pmsq_score
@@ -148,8 +149,10 @@ class Train(Engine):
 
         state = {"score": score, "pesq": pesq, "stoi": stoi, "sisnr": sisnr}
 
+        loss_dict = self.loss_fn(sph, enh)
+
         # return dict(state, **composite)
-        return dict(state)
+        return dict(state, **loss_dict)
 
     def _valid_each_epoch(self, epoch):
         metric_rec = REC()
@@ -301,7 +304,7 @@ if __name__ == "__main__":
             align=True,
         ),
         net=net,
-        batch_sz=4,
+        batch_sz=6,
         valid_first=False,
         **init,
     )

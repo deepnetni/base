@@ -42,7 +42,7 @@ class InstanceNorm(nn.Module):
         return outputs
 
 
-def complex_apply_mask(inputs, mask, method="E"):
+def complex_apply_mask(inputs, mask, method="C"):
     """
     inputs: B, C(r, i), T, F
     mask: B, C(r, i), T, F

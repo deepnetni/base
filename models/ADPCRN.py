@@ -18,7 +18,66 @@ from models.complexnn import (
 from models.conv_stft import STFT
 from models.ft_lstm import FTLSTM_RESNET
 from models.CMGAN.generator import DilatedDenseNet
-from models.Fusion.ms_cam import MS_CAM, MS_SELF_CAM
+from models.Fusion.ms_cam import AFF, MS_CAM, MS_SELF_CAM
+
+
+class ChannelFreqAttention(nn.Module):
+    def __init__(self, inp_channels: int, feature_size: int) -> None:
+        super().__init__()
+
+        self.layer_ch = nn.Sequential(
+            nn.AvgPool2d(
+                kernel_size=(1, feature_size), stride=(1, feature_size)
+            ),  # B,C,T,1
+            nn.Conv2d(
+                in_channels=inp_channels,
+                out_channels=inp_channels,
+                kernel_size=1,
+                stride=1,
+                padding=0,
+            ),
+            Rearrange("b c t f-> b t c f"),
+            nn.LayerNorm(1, inp_channels),
+            Rearrange("b t c f-> b c t f"),
+            nn.PReLU(),
+            nn.Conv2d(
+                in_channels=inp_channels,
+                out_channels=inp_channels,
+                kernel_size=1,
+                stride=1,
+                padding=0,
+                groups=inp_channels,
+            ),
+            nn.Sigmoid(),
+        )
+
+        self.layer_freq = nn.Sequential(
+            nn.Conv2d(
+                in_channels=inp_channels,
+                out_channels=inp_channels,
+                kernel_size=1,
+                stride=1,
+                padding=0,
+            ),
+            Rearrange("b c t f-> b t c f"),
+            nn.LayerNorm(feature_size, inp_channels),
+            Rearrange("b t c f-> b c t f"),
+            nn.PReLU(),
+            nn.Conv2d(
+                in_channels=inp_channels,
+                out_channels=inp_channels,
+                kernel_size=1,
+                stride=1,
+                padding=0,
+            ),
+            nn.Sigmoid(),
+        )
+
+    def forward(self, x):
+        x = x * self.layer_ch(x)
+        x = x * self.layer_freq(x)
+
+        return x
 
 
 class ADPCRN_MS(nn.Module):
@@ -56,6 +115,7 @@ class ADPCRN_MS(nn.Module):
 
             self.conn_l.append(
                 MS_CAM(inp_channels=self.cnn_num[idx + 1], feature_size=nbin)
+                # AFF(inp_channels=self.cnn_num[idx + 1], feature_size=nbin)
             )
 
             self.encoder_rel.append(
@@ -121,8 +181,8 @@ class ADPCRN_MS(nn.Module):
                             padding=(0, 2),
                             stride=(1, stride[-1 - idx]),
                         ),
-                        InstanceNorm(2 * self.fft_dim),
-                        nn.PReLU(),
+                        # InstanceNorm(2 * self.fft_dim),
+                        # nn.PReLU(),
                     )
                 )
 
@@ -560,8 +620,8 @@ class DPCRN_AEC(nn.Module):
                             padding=(0, 2),
                             stride=(1, stride[-1 - idx]),
                         ),
-                        InstanceNorm(2 * self.fft_dim),
-                        nn.PReLU(),
+                        # InstanceNorm(2 * self.fft_dim),
+                        # nn.PReLU(),
                     )
                 )
 
@@ -777,8 +837,8 @@ class ADPCRN_ATTN(nn.Module):
                             padding=(0, 2),
                             stride=(1, stride[-1 - idx]),
                         ),
-                        InstanceNorm(2 * self.fft_dim),
-                        nn.PReLU(),
+                        # InstanceNorm(2 * self.fft_dim),
+                        # nn.PReLU(),
                     )
                 )
 
@@ -1013,8 +1073,8 @@ class ADPCRN_Dilated(nn.Module):
                             padding=(0, 2),
                             stride=(1, stride[-1 - idx]),
                         ),
-                        InstanceNorm(2 * self.fft_dim),
-                        nn.PReLU(),
+                        # InstanceNorm(2 * self.fft_dim),
+                        # nn.PReLU(),
                     )
                 )
 
