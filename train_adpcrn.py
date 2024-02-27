@@ -208,12 +208,12 @@ class Train(Engine):
 
 def parse():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--wo-SFP", help="without SFP path mode", action="store_true")
+    parser.add_argument("--wo-sfp", help="without SFP path mode", action="store_true")
     parser.add_argument(
-        "--wfusion-ATT", help="fusion with the atten method", action="store_true"
+        "--wfusion-att", help="fusion with the atten method", action="store_true"
     )
     parser.add_argument(
-        "--wfusion-MS", help="fusion with the atten method", action="store_true"
+        "--wfusion-ms", help="fusion with the atten method", action="store_true"
     )
     parser.add_argument(
         "--wfusion-dilated", help="fusion with the atten method", action="store_true"
@@ -231,7 +231,7 @@ def parse():
 if __name__ == "__main__":
     args = parse()
 
-    if args.wo_SFP:  # 31
+    if args.wo_sfp:  # 31
         cfg_fname = "config/config_adpcrn_wo_sfp.ini"
         cfg = read_ini(cfg_fname)
         net = DPCRN_AEC(
@@ -242,7 +242,7 @@ if __name__ == "__main__":
             stride=[2, 2, 1, 1],
             rnn_hidden_num=128,
         )
-    elif args.wfusion_MS:  # 212
+    elif args.wfusion_ms:  # 212
         cfg_fname = "config/config_adpcrn_w_fusion_ms.ini"
         cfg = read_ini(cfg_fname)
         net = ADPCRN_MS(
@@ -253,7 +253,7 @@ if __name__ == "__main__":
             stride=[2, 2, 1, 1],
             rnn_hidden_num=128,
         )
-    elif args.wfusion_ATT:  # 212
+    elif args.wfusion_att:  # 212
         cfg_fname = "config/config_adpcrn_w_fusion_att.ini"
         cfg = read_ini(cfg_fname)
         net = ADPCRN_ATTN(
@@ -304,7 +304,7 @@ if __name__ == "__main__":
             align=True,
         ),
         net=net,
-        batch_sz=6,
+        batch_sz=4,
         valid_first=False,
         **init,
     )
