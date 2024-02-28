@@ -88,6 +88,7 @@ class NSTrunk(Dataset):
     ):
         super().__init__()
         self.dir = Path(dirname)
+        self.logger = get_logger(dirname)
 
         self.f_list = self._prepare(flist, patten, keymap, clean_dirname)
         if seed is not None:
@@ -96,7 +97,6 @@ class NSTrunk(Dataset):
 
         self.keymap = keymap
         self.clean_dir = clean_dirname
-        self.logger = get_logger(dirname)
         self.norm = norm
         self.return_abspath = return_abspath
         self.dataL = data_len
@@ -105,7 +105,7 @@ class NSTrunk(Dataset):
         assert data_len != -1 and clip_len != -1 or data_len == -1 and clip_len == -1
         self.n_clip = int(data_len // clip_len)
 
-        self.logger.info(f"Get {dirname} {len(self.f_list)} training files.")
+        self.logger.info(f"Get {dirname} {len(self.f_list)} files.")
 
     def _prepare(
         self,
@@ -118,6 +118,7 @@ class NSTrunk(Dataset):
         fname: file path of a file list
         """
         if fname is not None and os.path.exists(fname):
+            self.logger.info(f"Load flist {fname}")
             f_list = self.load_f_list(fname)
         else:
             f_list = []
@@ -257,6 +258,7 @@ class AECTrunk(Dataset):
     ):
         super().__init__()
         self.dir = Path(dirname)
+        self.logger = get_logger(dirname)
 
         self.f_list = self._prepare(flist, patten, keymap)
         if seed is not None:
@@ -264,7 +266,6 @@ class AECTrunk(Dataset):
             random.shuffle(self.f_list)
 
         self.keymap = keymap
-        self.logger = get_logger(dirname)
         self.norm = norm
         self.return_abspath = return_abspath
         self.dataL = data_len
@@ -278,7 +279,7 @@ class AECTrunk(Dataset):
         self.fe_flag = fe_flag
         self.tgt_fs = tgt_fs
 
-        self.logger.info(f"Get {dirname} {len(self.f_list)} training files.")
+        self.logger.info(f"Get {dirname} {len(self.f_list)} files.")
 
     def _prepare(
         self, fname: Optional[str], patten: str, keymap: Tuple[str, str, str]
@@ -287,7 +288,8 @@ class AECTrunk(Dataset):
         fname: file path of a file list
         """
         if fname is not None and os.path.exists(fname):
-            f_list = self.load_f_list(fname)
+            f_list = self.load_f_list(fname, str(self.dir))
+            self.logger.info(f"Load flist {fname}")
         else:
             f_list = []
             f_mic_list = list(map(str, self.dir.glob(patten)))
@@ -299,23 +301,33 @@ class AECTrunk(Dataset):
                 f_sph = os.path.join(dirp, f_sph)
                 f_list.append((f_mic, f_ref, f_sph))
 
-            self.save_f_list(fname, f_list) if fname is not None else None
+            self.save_f_list(
+                fname, f_list, str(self.dir)
+            ) if fname is not None else None
         return f_list
 
-    def load_f_list(self, fname: str) -> List:
+    def load_f_list(self, fname: str, relative: Optional[str] = None) -> List:
         f_list = []
         with open(fname, "r+") as fp:
             ctx = csv.reader(fp)
             for element in ctx:
-                f_list.append(element)
+                f_list.append(
+                    element
+                    if relative is None
+                    else tuple(map(lambda x: os.path.join(relative, x), element))
+                )
 
         return f_list
 
-    def save_f_list(self, fname: str, f_list: List):
+    def save_f_list(self, fname: str, f_list: List, relative: Optional[str] = None):
         with open(fname, "w+") as fp:
             writer = csv.writer(fp)
             for f in f_list:
-                writer.writerow(f)
+                writer.writerow(
+                    f
+                    if relative is None
+                    else tuple(map(lambda x: os.path.relpath(x, relative), f))
+                )
 
     def __len__(self):
         return len(self.f_list) * self.n_clip
