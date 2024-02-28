@@ -14,6 +14,7 @@ from models.complexnn import (
     InstanceNorm,
     complex_apply_mask,
     complex_cat,
+    ComplexConv1d,
 )
 from models.conv_stft import STFT
 from models.ft_lstm import FTLSTM_RESNET
@@ -78,6 +79,171 @@ class ChannelFreqAttention(nn.Module):
         x = x * self.layer_freq(x)
 
         return x
+
+
+class CRN_AEC(nn.Module):
+    def __init__(
+        self,
+        nframe: int,
+        nhop: int,
+        nfft: Optional[int] = None,
+        cnn_num: List = [16, 32, 64, 64],
+        stride: List = [2, 1, 2, 1],
+        rnn_hidden_num: int = 64,
+    ):
+        super().__init__()
+        self.nframe = nframe
+        self.nhop = nhop
+        self.fft_dim = nframe // 2 + 1
+        self.cnn_num = [4] + cnn_num
+
+        self.stft = STFT(nframe, nhop, nfft=nframe if nfft is None else nfft)
+
+        self.conv_l = nn.ModuleList()
+
+        self.encoder_l = nn.ModuleList()
+        self.decoder_l = nn.ModuleList()
+        self.atten_l = nn.ModuleList()
+        n_cnn_layer = len(self.cnn_num) - 1
+
+        nbin = self.fft_dim
+        nbinT = (self.fft_dim >> stride.count(2)) + 1
+
+        for idx in range(n_cnn_layer):
+            # feat_num = (self.fft_dim >> idx + 1) + 1
+            # batchCh = self.cnn_num[idx + 1] * ((self.fft_dim >> idx + 1) + 1)
+            nbin = ((nbin >> 1) + 1) if stride[idx] == 2 else nbin
+            nbinT = (nbinT << 1) - 1 if stride[-1 - idx] == 2 else nbinT
+
+            self.encoder_l.append(
+                nn.Sequential(
+                    ComplexConv2d(
+                        in_channels=self.cnn_num[idx],
+                        out_channels=self.cnn_num[idx + 1],
+                        kernel_size=(3, 5),
+                        padding=(2, 2),  # (k_h - 1)/2
+                        stride=(1, stride[idx]),
+                    ),
+                    # nn.BatchNorm2d(self.cnn_num[idx + 1]),
+                    # nn.InstanceNorm2d(self.cnn_num[idx + 1]),
+                    # InstanceNorm(),
+                    InstanceNorm(self.cnn_num[idx + 1] * nbin),
+                    nn.PReLU(),
+                )
+            )
+
+            if idx != n_cnn_layer - 1:
+                self.decoder_l.append(
+                    nn.Sequential(
+                        # ComplexConvTranspose2d(
+                        ComplexGateConvTranspose2d(
+                            in_channels=2 * self.cnn_num[-1 - idx],  # skip_connection
+                            out_channels=self.cnn_num[-1 - idx - 1],
+                            kernel_size=(1, 5),
+                            padding=(0, 2),
+                            stride=(1, stride[-1 - idx]),
+                        ),
+                        # nn.BatchNorm2d(self.cnn_num[-1 - idx - 1] // 2),
+                        # nn.InstanceNorm2d(self.cnn_num[-1 - idx - 1] // 2),
+                        # InstanceNorm(),
+                        InstanceNorm(self.cnn_num[-1 - idx - 1] * nbinT),
+                        # * ((self.fft_dim >> n_cnn_layer - idx - 1) + 1)
+                        nn.PReLU(),
+                    )
+                )
+            else:
+                self.decoder_l.append(
+                    nn.Sequential(
+                        ComplexGateConvTranspose2d(
+                            in_channels=2 * self.cnn_num[-1 - idx],  # skip_connection
+                            out_channels=2,
+                            kernel_size=(1, 5),
+                            padding=(0, 2),
+                            stride=(1, stride[-1 - idx]),
+                        ),
+                        # InstanceNorm(2 * self.fft_dim),
+                        # nn.PReLU(),
+                    )
+                )
+
+        # self.rnns_r = FTLSTM(cnn_num[-1] // 2, rnn_hidden_num)
+        # self.rnns_i = FTLSTM(cnn_num[-1] // 2, rnn_hidden_num)
+        self.rnns_r = nn.Sequential(
+            FTLSTM_RESNET(cnn_num[-1] // 2, rnn_hidden_num),
+            FTLSTM_RESNET(cnn_num[-1] // 2, rnn_hidden_num),
+        )
+        self.rnns_i = nn.Sequential(
+            FTLSTM_RESNET(cnn_num[-1] // 2, rnn_hidden_num),
+            FTLSTM_RESNET(cnn_num[-1] // 2, rnn_hidden_num),
+        )
+
+        self.post_conv = ComplexConv1d(
+            in_channels=2 * self.fft_dim,
+            out_channels=2 * self.fft_dim,
+            kernel_size=1,
+            stride=1,
+            padding=0,
+        )
+
+    def forward(self, mic, ref):
+        """
+        inputs: shape is [B, T] or [B, 1, T]
+        """
+
+        specs_mic = self.stft.transform(mic)  # [B, 2, T, F]
+        specs_ref = self.stft.transform(ref)
+
+        specs_mic_real, specs_mic_imag = specs_mic.chunk(2, dim=1)  # B,1,T,F
+        specs_ref_real, specs_ref_imag = specs_ref.chunk(2, dim=1)
+
+        specs_mix = torch.concat(
+            [specs_mic_real, specs_ref_real, specs_mic_imag, specs_ref_imag], dim=1
+        )  # [B, 4, T, F]
+
+        feat = torch.stack([specs_mic_real, specs_mic_imag], dim=1)
+
+        x = specs_mix
+        feat_store = []
+        for idx, layer in enumerate(self.encoder_l):
+            x = layer(x)  # x shape [B, C, T, F]
+            feat_store.append(x)
+
+        nB, nC, nF, nT = x.shape
+        x_r, x_i = torch.chunk(x, 2, dim=1)
+
+        feat_r = self.rnns_r(x_r)
+        feat_i = self.rnns_i(x_i)
+
+        # mask_r, mask_i = F.tanh(mask_r), F.tanh(mask_i)
+        # cmask = torch.concatenate([mask_r, mask_i], dim=1)
+        # feat_r, feat_i = complex_mask_multi(feat, cmask)
+
+        feat = torch.concat([feat_r, feat_i], dim=1)
+
+        # B,C,F,T
+        x = feat
+        for idx, layer in enumerate(self.decoder_l):
+            x = complex_cat([x, feat_store[-idx - 1]], dim=1)
+            # print("Tconv", idx, feat.shape)
+            x = layer(x)
+            # feat = feat[..., 1:]  # padding=(2, 0) will padding 1 col in Time dimension
+
+        feat_r, feat_i = complex_apply_mask(specs_mic, x)
+        feat_r = feat_r.squeeze(dim=1).permute(0, 2, 1)  # b1tf -> bft
+        feat_i = feat_i.squeeze(dim=1).permute(0, 2, 1)
+        feat = torch.concat([feat_r, feat_i], dim=1)  # b,2f,t
+        # print("Tconv", feat.shape)
+        # B, 2, F, T -> B, F(r, i), T
+        # feat = feat.reshape(nB, self.fft_dim * 2, -1)  # B, F, T
+        feat = self.post_conv(feat)  # b,f,t
+        r, i = feat.permute(0, 2, 1).chunk(2, dim=-1)  # b,t,f
+        feat = torch.stack([r, i], dim=1)
+
+        out_wav = self.stft.inverse(feat)
+        out_wav = torch.squeeze(out_wav, 1)
+        out_wav = torch.clamp(out_wav, -1, 1)
+
+        return out_wav
 
 
 class ADPCRN_MS(nn.Module):
@@ -401,20 +567,20 @@ class ADPCRN(nn.Module):
                             padding=(0, 2),
                             stride=(1, stride[-1 - idx]),
                         ),
-                        InstanceNorm(2 * self.fft_dim),
-                        nn.PReLU(),
+                        # InstanceNorm(2 * self.fft_dim),
+                        # nn.PReLU(),
                     )
                 )
 
         self.encoder_fusion = nn.Sequential(
             ComplexConv2d(
-                in_channels=2 * self.cnn_num[-1],
+                in_channels=self.cnn_num[-1],
                 out_channels=self.cnn_num[-1],
                 kernel_size=(1, 1),
                 stride=(1, 1),
             ),
             InstanceNorm(nbin * self.cnn_num[-1]),
-            nn.PReLU(),
+            nn.Tanh(),
         )
 
         self.rnns_r = nn.Sequential(
@@ -491,9 +657,10 @@ class ADPCRN(nn.Module):
 
         # Fusion
         # x = torch.concat([spec, x], dim=1)
-        x = complex_cat([spec, x], dim=1)
-        x = self.encoder_fusion(x)
-        # x = x + spec
+        # x = complex_cat([spec, x], dim=1)
+        # x = self.encoder_fusion(x)
+        x = x + spec
+        # x = self.encoder_fusion(x) * spec
         x_r, x_i = torch.chunk(x, 2, dim=1)
 
         x_r = self.rnns_r(x_r)
@@ -516,7 +683,8 @@ class ADPCRN(nn.Module):
         feat_r, feat_i = complex_apply_mask(specs_mic, x)
         x = torch.concat([feat_r, feat_i], dim=1)
 
-        feat = self.post_conv(x)
+        # feat = self.post_conv(x)
+        feat = x
 
         out_wav = self.stft.inverse(feat)  # B, 1, T
         out_wav = torch.squeeze(out_wav, 1)

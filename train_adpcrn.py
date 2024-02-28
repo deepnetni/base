@@ -11,7 +11,14 @@ from utils.losses import loss_compressed_mag, loss_sisnr, loss_pmsqe
 from tqdm import tqdm
 from typing import Dict
 from models.APC_SNR.apc_snr import APC_SNR_multi_filter
-from models.ADPCRN import ADPCRN, ADPCRN_ATTN, DPCRN_AEC, ADPCRN_Dilated, ADPCRN_MS
+from models.ADPCRN import (
+    ADPCRN,
+    ADPCRN_ATTN,
+    CRN_AEC,
+    DPCRN_AEC,
+    ADPCRN_Dilated,
+    ADPCRN_MS,
+)
 from models.conv_stft import STFT
 
 # from models.pase.models.frontend import wf_builder
@@ -208,6 +215,7 @@ class Train(Engine):
 
 def parse():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--crn", help="crn aec model", action="store_true")
     parser.add_argument("--wo-sfp", help="without SFP path mode", action="store_true")
     parser.add_argument(
         "--wfusion-att", help="fusion with the atten method", action="store_true"
@@ -235,6 +243,17 @@ if __name__ == "__main__":
         cfg_fname = "config/config_adpcrn_wo_sfp.ini"
         cfg = read_ini(cfg_fname)
         net = DPCRN_AEC(
+            nframe=512,
+            nhop=256,
+            nfft=512,
+            cnn_num=[16, 32, 64, 128],
+            stride=[2, 2, 1, 1],
+            rnn_hidden_num=128,
+        )
+    elif args.crn:  # 212
+        cfg_fname = "config/config_adpcrn_crn.ini"
+        cfg = read_ini(cfg_fname)
+        net = CRN_AEC(
             nframe=512,
             nhop=256,
             nfft=512,

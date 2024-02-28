@@ -1,7 +1,14 @@
 import os
+import sys
+import json
+import csv
+from pathlib import Path
+
+sys.path.append(str(Path(__file__).parent.parent))
+
 import random
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -9,8 +16,8 @@ from torch.utils.data import Dataset
 
 from utils.gcc_phat import gcc_phat
 
-from .audiolib import audioread
-from .logger import get_logger
+from utils.audiolib import audioread
+from utils.logger import get_logger
 
 
 class NSTrunk(Dataset):
@@ -71,6 +78,7 @@ class NSTrunk(Dataset):
         dirname: str,
         patten: str = "**/*.wav",
         keymap: Optional[Tuple[str, str]] = None,
+        flist: Optional[str] = None,
         clean_dirname: Optional[str] = None,
         data_len: int = -1,
         clip_len: int = -1,
@@ -81,7 +89,7 @@ class NSTrunk(Dataset):
         super().__init__()
         self.dir = Path(dirname)
 
-        self.f_list = list(self.dir.glob(patten))
+        self.f_list = self._prepare(flist, patten, keymap, clean_dirname)
         if seed is not None:
             random.seed(seed)
             random.shuffle(self.f_list)
@@ -97,7 +105,48 @@ class NSTrunk(Dataset):
         assert data_len != -1 and clip_len != -1 or data_len == -1 and clip_len == -1
         self.n_clip = int(data_len // clip_len)
 
-        self.logger.info(f"Get {dirname} {len(self.f_list)} mic files.")
+        self.logger.info(f"Get {dirname} {len(self.f_list)} training files.")
+
+    def _prepare(
+        self,
+        fname: Optional[str],
+        patten: str,
+        keymap: Optional[Tuple[str, str]] = None,
+        clean_dirname: Optional[str] = None,
+    ) -> List:
+        """
+        fname: file path of a file list
+        """
+        if fname is not None and os.path.exists(fname):
+            f_list = self.load_f_list(fname)
+        else:
+            f_list = []
+            f_mic_list = list(map(str, self.dir.glob(patten)))
+            # if keymap is not None:
+            #     f_sph = f_mic.replace(str(self.dir), self.clean_dir)
+            for f_mic in f_mic_list:
+                dirp, f_mic_name = os.path.split(f_mic)
+                f_sph = f_mic_name.replace(keymap[0], keymap[2])
+                f_sph = os.path.join(dirp, f_sph)
+                f_list.append((f_mic, f_sph))
+
+            self.save_f_list(fname, f_list) if fname is not None else None
+        return f_list
+
+    def load_f_list(self, fname: str) -> List:
+        f_list = []
+        with open(fname, "r+") as fp:
+            ctx = csv.reader(fp)
+            for element in ctx:
+                f_list.append(element)
+
+        return f_list
+
+    def save_f_list(self, fname: str, f_list: List):
+        with open(fname, "w+") as fp:
+            writer = csv.writer(fp)
+            for f in f_list:
+                writer.writerow(f)
 
     def __len__(self):
         return len(self.f_list) * self.n_clip
@@ -109,7 +158,7 @@ class NSTrunk(Dataset):
 
     def __getitem__(self, index) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         idx, slice_idx = index // self.n_clip, index % self.n_clip
-        f_mic = str(self.f_list[idx])
+        (f_mic,) = self.f_list[idx]
         if self.keymap is not None:
             if self.clean_dir is None:  # under same directory with different name
                 assert self.keymap is not None
@@ -194,6 +243,7 @@ class AECTrunk(Dataset):
         dirname: str,
         patten: str,  # = "**/*.wav",
         keymap: Tuple[str, str, str],
+        flist: Optional[str] = None,
         data_len: int = -1,
         clip_len: int = -1,
         tgt_fs: int = 16000,
@@ -208,7 +258,7 @@ class AECTrunk(Dataset):
         super().__init__()
         self.dir = Path(dirname)
 
-        self.f_list = list(self.dir.glob(patten))
+        self.f_list = self._prepare(flist, patten, keymap)
         if seed is not None:
             random.seed(seed)
             random.shuffle(self.f_list)
@@ -228,22 +278,44 @@ class AECTrunk(Dataset):
         self.fe_flag = fe_flag
         self.tgt_fs = tgt_fs
 
-        self.logger.info(f"Get {dirname} {len(self.f_list)} mic files.")
+        self.logger.info(f"Get {dirname} {len(self.f_list)} training files.")
 
-    # def _fread(self, fname, sub_mean=True):
-    #     data, fs = sf.read(fname)
+    def _prepare(
+        self, fname: Optional[str], patten: str, keymap: Tuple[str, str, str]
+    ) -> List:
+        """
+        fname: file path of a file list
+        """
+        if fname is not None and os.path.exists(fname):
+            f_list = self.load_f_list(fname)
+        else:
+            f_list = []
+            f_mic_list = list(map(str, self.dir.glob(patten)))
+            for f_mic in f_mic_list:
+                dirp, f_mic_name = os.path.split(f_mic)
+                f_ref = f_mic_name.replace(keymap[0], keymap[1])
+                f_ref = os.path.join(dirp, f_ref)
+                f_sph = f_mic_name.replace(keymap[0], keymap[2])
+                f_sph = os.path.join(dirp, f_sph)
+                f_list.append((f_mic, f_ref, f_sph))
 
-    #     if not os.path.exists(fname):
-    #         raise RuntimeError(f"file not exist: {fname}")
+            self.save_f_list(fname, f_list) if fname is not None else None
+        return f_list
 
-    #     if sub_mean:
-    #         try:
-    #             data = data - np.mean(data, axis=0, keepdims=True)
-    #         except Exception as e:
-    #             print("########", e)
+    def load_f_list(self, fname: str) -> List:
+        f_list = []
+        with open(fname, "r+") as fp:
+            ctx = csv.reader(fp)
+            for element in ctx:
+                f_list.append(element)
 
-    #     data = np.clip(data, -1.0, 1.0)
-    #     return data.astype(np.float32), fs
+        return f_list
+
+    def save_f_list(self, fname: str, f_list: List):
+        with open(fname, "w+") as fp:
+            writer = csv.writer(fp)
+            for f in f_list:
+                writer.writerow(f)
 
     def __len__(self):
         return len(self.f_list) * self.n_clip
@@ -256,9 +328,8 @@ class AECTrunk(Dataset):
     def __getitem__(self, index) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         idx, slice_idx = index // self.n_clip, index % self.n_clip
 
-        f_mic = str(self.f_list[idx])
-        # assert self.keymap is not None
-        dirp, fname_mic = os.path.split(f_mic)
+        f_mic, f_ref, f_sph = self.f_list[idx]
+        dirp = os.path.dirname(f_mic)
 
         dirname = Path(dirp)
         if any(item in dirname.parts for item in self.ne_flag):
@@ -269,12 +340,6 @@ class AECTrunk(Dataset):
             cond = AECTrunk.DT
         else:
             raise RuntimeError("Scenario is not specified.")
-
-        fname_ref = fname_mic.replace(self.keymap[0], self.keymap[1])
-        f_ref = os.path.join(dirp, fname_ref)
-
-        fname_sph = fname_mic.replace(self.keymap[0], self.keymap[2])
-        f_sph = os.path.join(dirp, fname_sph)
 
         d_mic, fs_1 = audioread(f_mic, sub_mean=True)
         d_ref, fs_2 = audioread(f_ref, sub_mean=True)
@@ -309,9 +374,8 @@ class AECTrunk(Dataset):
         if self.pick_idx > len(self.f_list):
             raise StopIteration
 
-        mic_fname = str(self.f_list[self.pick_idx])
+        mic_fname, ref_fname = self.f_list[self.pick_idx]
         d_mic, fs_1 = audioread(mic_fname, sub_mean=True, target_level=self.norm)
-        ref_fname = mic_fname.replace(self.keymap[0], self.keymap[1])
         d_ref, fs_2 = audioread(ref_fname, sub_mean=True, target_level=self.norm)
         assert fs_1 == fs_2
 
@@ -340,3 +404,13 @@ class AECTrunk(Dataset):
             torch.from_numpy(d_ref[:N]).float()[None, :],
             fname,
         )
+
+
+if __name__ == "__main__":
+    dset = AECTrunk(
+        "/home/deepnetni/trunk/gene-AEC-train-100-30",
+        flist="list.csv",
+        patten="**/*mic.wav",
+        keymap=("mic", "ref", "sph"),
+        align=True,
+    )

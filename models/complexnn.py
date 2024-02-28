@@ -52,15 +52,18 @@ def complex_apply_mask(inputs, mask, method="C"):
     mask_r, mask_i = torch.chunk(mask, 2, dim=1)
     feat_r, feat_i = torch.chunk(inputs, 2, dim=1)
     if method == "E":
-        mask_mag = F.sigmoid((mask_r**2 + mask_i**2) ** 0.5)
-        mask_phs = torch.atan2(mask_i, mask_r + 1e-8)
-        feat_mag = (feat_r**2 + feat_i**2 + 1e-8) ** 0.5
-        feat_phs = torch.atan2(feat_i, feat_r + 1e-8)
+        mask_mags = (mask_r**2 + mask_i**2) ** 0.5
+        real_phase = mask_r / (mask_mags + 1e-8)
+        imag_phase = mask_i / (mask_mags + 1e-8)
+        mask_phase = torch.atan2(imag_phase, real_phase)
 
-        feat_mag = feat_mag * mask_mag
-        feat_phs += mask_phs
-        feat_r = feat_mag * torch.cos(feat_phs)
-        feat_i = feat_mag * torch.sin(feat_phs)
+        feat_mag = (feat_r**2 + feat_i**2 + 1e-8) ** 0.5
+        feat_phs = torch.atan2(feat_i, feat_r)
+        # mask_mags = torch.tanh(mask_mags)
+        est_mags = mask_mags * feat_mag
+        est_phase = feat_phs + mask_phase
+        feat_r = est_mags * torch.cos(est_phase)
+        feat_i = est_mags * torch.sin(est_phase)
     elif method == "C":
         feat_r = feat_r * mask_r - feat_i * mask_i
         feat_i = feat_r * mask_i + feat_i * mask_r
