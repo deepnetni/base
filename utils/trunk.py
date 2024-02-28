@@ -1,23 +1,68 @@
+import csv
 import os
 import sys
-import json
-import csv
 from pathlib import Path
+
+import librosa
 
 sys.path.append(str(Path(__file__).parent.parent))
 
 import random
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Union
 
 import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from utils.gcc_phat import gcc_phat
-
 from utils.audiolib import audioread
+from utils.gcc_phat import gcc_phat
 from utils.logger import get_logger
+
+
+def load_f_list(fname: str, relative: Union[str, Tuple[str, ...], None] = None) -> List:
+    """
+    relative: str or tuple of str each corresponding to element in the file.
+    return: [(f1, f2..), (...)]
+    """
+    f_list = []
+    with open(fname, "r+") as fp:
+        ctx = csv.reader(fp)
+        for element in ctx:
+            if isinstance(relative, tuple):
+                f_list.append(
+                    tuple(map(lambda x, y: os.path.join(x, y), relative, element))
+                )
+            else:
+                f_list.append(
+                    element
+                    if relative is None
+                    else tuple(map(lambda x: os.path.join(relative, x), element))
+                )
+
+    return f_list
+
+
+def save_f_list(
+    fname: str, f_list: List, relative: Union[str, Tuple[str, ...], None] = None
+):
+    """
+    fname: csv file contains the training files path with format [(f1, f2..), (f1, f2)]
+    relative: str or tuple of str each corresponding to element in f_list
+    """
+    with open(fname, "w+") as fp:
+        writer = csv.writer(fp)
+        for f in f_list:
+            if isinstance(relative, tuple):
+                writer.writerow(
+                    tuple(map(lambda x, y: os.path.relpath(x, y), f, relative))
+                )
+            else:
+                writer.writerow(
+                    f
+                    if relative is None
+                    else tuple(map(lambda x: os.path.relpath(x, relative), f))
+                )
 
 
 class NSTrunk(Dataset):
@@ -117,37 +162,45 @@ class NSTrunk(Dataset):
         """
         fname: file path of a file list
         """
+        assert keymap is None or clean_dirname is None
+
         if fname is not None and os.path.exists(fname):
             self.logger.info(f"Load flist {fname}")
-            f_list = self.load_f_list(fname)
+            f_list = load_f_list(
+                fname,
+                (
+                    str(self.dir),
+                    str(self.dir) if clean_dirname is None else clean_dirname,
+                ),
+            )
         else:
             f_list = []
             f_mic_list = list(map(str, self.dir.glob(patten)))
             # if keymap is not None:
             #     f_sph = f_mic.replace(str(self.dir), self.clean_dir)
             for f_mic in f_mic_list:
-                dirp, f_mic_name = os.path.split(f_mic)
-                f_sph = f_mic_name.replace(keymap[0], keymap[2])
-                f_sph = os.path.join(dirp, f_sph)
+                if keymap is not None:
+                    # under same directory with different name
+                    dirp, f_mic_name = os.path.split(f_mic)
+                    f_sph = f_mic_name.replace(*keymap)
+                    f_sph = os.path.join(dirp, f_sph)
+                elif clean_dirname is not None:
+                    # under different directory with same name
+                    f_sph = f_mic.replace(str(self.dir), clean_dirname)
+                else:
+                    raise RuntimeError("keymap and clean_dirname are both None.")
+
                 f_list.append((f_mic, f_sph))
 
-            self.save_f_list(fname, f_list) if fname is not None else None
+            save_f_list(
+                fname,
+                f_list,
+                (
+                    str(self.dir),
+                    str(self.dir) if clean_dirname is None else clean_dirname,
+                ),
+            ) if fname is not None else None
         return f_list
-
-    def load_f_list(self, fname: str) -> List:
-        f_list = []
-        with open(fname, "r+") as fp:
-            ctx = csv.reader(fp)
-            for element in ctx:
-                f_list.append(element)
-
-        return f_list
-
-    def save_f_list(self, fname: str, f_list: List):
-        with open(fname, "w+") as fp:
-            writer = csv.writer(fp)
-            for f in f_list:
-                writer.writerow(f)
 
     def __len__(self):
         return len(self.f_list) * self.n_clip
@@ -157,48 +210,34 @@ class NSTrunk(Dataset):
         ed = st + fs * self.clipL if self.clipL != -1 else None
         return data[st:ed]
 
-    def __getitem__(self, index) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    def __getitem__(self, index) -> Tuple[torch.Tensor, torch.Tensor]:
         idx, slice_idx = index // self.n_clip, index % self.n_clip
-        (f_mic,) = self.f_list[idx]
-        if self.keymap is not None:
-            if self.clean_dir is None:  # under same directory with different name
-                assert self.keymap is not None
-                dirp, fname_mic = os.path.split(f_mic)
-                fname_sph = fname_mic.replace(*self.keymap)
-                f_sph = os.path.join(dirp, fname_sph)
-            else:  # under different directory with same name
-                # assert self.clean_dir is not None
-                f_sph = f_mic.replace(str(self.dir), self.clean_dir)
+        f_mic, f_sph = self.f_list[idx]
 
-            d_mic, fs_1 = audioread(f_mic)
-            d_sph, fs_2 = audioread(f_sph)
-            assert fs_1 == fs_2
-            d_mic = self._split(d_mic, fs_1, slice_idx)
-            d_sph = self._split(d_sph, fs_2, slice_idx)
+        d_mic, fs_1 = audioread(f_mic, sub_mean=True, target_level=self.norm)
+        d_sph, fs_2 = audioread(f_sph, sub_mean=True, target_level=self.norm)
+        assert fs_1 == fs_2
+        d_mic = self._split(d_mic, fs_1, slice_idx)
+        d_sph = self._split(d_sph, fs_2, slice_idx)
 
-            return torch.from_numpy(d_mic).float(), torch.from_numpy(d_sph).float()
-        else:  # without keymap only return noisy mic data.
-            d_mic, fs_1 = audioread(f_mic)
-            d_mic = self._split(d_mic, fs_1, slice_idx)
-            d_mic = torch.from_numpy(d_mic).float()
-
-            return d_mic
+        return torch.from_numpy(d_mic).float(), torch.from_numpy(d_sph).float()
 
     def __iter__(self):
         self.pick_idx = 0
         return self
 
     def __next__(self) -> Tuple[torch.Tensor, str]:
-        """used for predict api"""
+        """used for predict api
+        return: data, relative path
+        """
         if self.pick_idx < len(self.f_list):
-            fname = self.f_list[self.pick_idx]
-            if self.norm is not None:
-                data, _ = audioread(fname, norm=True, target_level=self.norm)
-            else:
-                data, _ = audioread(fname)
+            fname, _ = self.f_list[self.pick_idx]
+            data, _ = audioread(fname, sub_mean=True, target_level=self.norm)
             self.pick_idx += 1
 
-            fname = str(fname) if self.return_abspath else fname.name
+            fname = (
+                fname if self.return_abspath else str(Path(fname).relative_to(self.dir))
+            )
             return torch.from_numpy(data).float()[None, :], fname
         else:
             raise StopIteration
@@ -288,7 +327,7 @@ class AECTrunk(Dataset):
         fname: file path of a file list
         """
         if fname is not None and os.path.exists(fname):
-            f_list = self.load_f_list(fname, str(self.dir))
+            f_list = load_f_list(fname, str(self.dir))
             self.logger.info(f"Load flist {fname}")
         else:
             f_list = []
@@ -301,33 +340,8 @@ class AECTrunk(Dataset):
                 f_sph = os.path.join(dirp, f_sph)
                 f_list.append((f_mic, f_ref, f_sph))
 
-            self.save_f_list(
-                fname, f_list, str(self.dir)
-            ) if fname is not None else None
+            save_f_list(fname, f_list, str(self.dir)) if fname is not None else None
         return f_list
-
-    def load_f_list(self, fname: str, relative: Optional[str] = None) -> List:
-        f_list = []
-        with open(fname, "r+") as fp:
-            ctx = csv.reader(fp)
-            for element in ctx:
-                f_list.append(
-                    element
-                    if relative is None
-                    else tuple(map(lambda x: os.path.join(relative, x), element))
-                )
-
-        return f_list
-
-    def save_f_list(self, fname: str, f_list: List, relative: Optional[str] = None):
-        with open(fname, "w+") as fp:
-            writer = csv.writer(fp)
-            for f in f_list:
-                writer.writerow(
-                    f
-                    if relative is None
-                    else tuple(map(lambda x: os.path.relpath(x, relative), f))
-                )
 
     def __len__(self):
         return len(self.f_list) * self.n_clip
@@ -353,9 +367,9 @@ class AECTrunk(Dataset):
         else:
             raise RuntimeError("Scenario is not specified.")
 
-        d_mic, fs_1 = audioread(f_mic, sub_mean=True)
-        d_ref, fs_2 = audioread(f_ref, sub_mean=True)
-        d_sph, fs_3 = audioread(f_sph, sub_mean=True)
+        d_mic, fs_1 = audioread(f_mic, sub_mean=True, target_level=self.norm)
+        d_ref, fs_2 = audioread(f_ref, sub_mean=True, target_level=self.norm)
+        d_sph, fs_3 = audioread(f_sph, sub_mean=True, target_level=self.norm)
 
         assert fs_1 == fs_2 == fs_3
 
@@ -386,7 +400,7 @@ class AECTrunk(Dataset):
         if self.pick_idx > len(self.f_list):
             raise StopIteration
 
-        mic_fname, ref_fname = self.f_list[self.pick_idx]
+        mic_fname, ref_fname, _ = self.f_list[self.pick_idx]
         d_mic, fs_1 = audioread(mic_fname, sub_mean=True, target_level=self.norm)
         d_ref, fs_2 = audioread(ref_fname, sub_mean=True, target_level=self.norm)
         assert fs_1 == fs_2
@@ -419,10 +433,18 @@ class AECTrunk(Dataset):
 
 
 if __name__ == "__main__":
-    dset = AECTrunk(
-        "/home/deepnetni/trunk/gene-AEC-train-100-30",
+    # dset = AECTrunk(
+    #     "/home/deepnetni/trunk/gene-AEC-train-100-30",
+    #     flist="list.csv",
+    #     patten="**/*mic.wav",
+    #     keymap=("mic", "ref", "sph"),
+    #     align=True,
+    # )
+
+    dset = NSTrunk(
+        "/home/deepnetni/trunk/vae_dns_p07",
         flist="list.csv",
-        patten="**/*mic.wav",
-        keymap=("mic", "ref", "sph"),
-        align=True,
+        patten="**/*_nearend.wav",
+        # keymap=("nearend.wav", "target.wav"),
+        clean_dirname="/home/deepnetni/trunk/vae_dns",
     )
