@@ -28,6 +28,7 @@ import argparse
 class Train(Engine):
     def __init__(self, train_dset, valid_dset, batch_sz, **kwargs):
         super().__init__(**kwargs)
+        self._set_seed()
         self.train_loader = DataLoader(
             train_dset,
             batch_size=batch_sz,
@@ -35,6 +36,7 @@ class Train(Engine):
             pin_memory=True,
             shuffle=True,
         )
+        self._set_seed()
         self.valid_loader = DataLoader(
             valid_dset,
             batch_size=batch_sz,
@@ -312,12 +314,14 @@ if __name__ == "__main__":
     eng = Train(
         AECTrunk(
             cfg["dataset"]["train_dset"],
+            flist="gene-aec-100-30.csv",
             patten="**/*mic.wav",
             keymap=("mic", "ref", "sph"),
             align=True,
         ),
         AECTrunk(
             cfg["dataset"]["valid_dset"],
+            flist="gene-aec-4-1.csv",
             patten="**/*mic.wav",
             keymap=("mic", "ref", "sph"),
             align=True,

@@ -4,7 +4,7 @@ import re
 from collections import Counter
 from itertools import repeat
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -12,6 +12,7 @@ import torch
 import torch.nn as nn
 from joblib import Parallel, delayed
 from torch.optim import Optimizer, lr_scheduler
+from torch.utils.data import Dataset
 from torch.utils.tensorboard.writer import SummaryWriter
 
 from utils.composite_metrics import eval_composite
@@ -44,6 +45,7 @@ class Engine(object):
         resume: bool = False,
         optimizer: str = "adam",
         scheduler: str = "stepLR",
+        seed: int = 0,
         valid_per_epoch: int = 1,
         valid_first: bool = False,
     ):
@@ -56,6 +58,7 @@ class Engine(object):
         self.start_epoch = 1
         self.valid_per_epoch = valid_per_epoch
         self.best_score = torch.finfo(torch.float32).min
+        self.seed = seed
 
         # checkpoints
         if os.path.isabs(info_dir):  # abspath
@@ -165,6 +168,9 @@ class Engine(object):
         return {
             k: np.array(v) for k, v in out.items()
         }  # {"pesq":,"csig":,"cbak","cvol"}
+
+    def _set_seed(self, seed: Optional[int] = None):
+        torch.manual_seed(seed if seed is not None else self.seed)
 
     def _draw_spectrogram(self, epoch, *args, **kwargs):
         """

@@ -355,6 +355,8 @@ class AECTrunk(Dataset):
         idx, slice_idx = index // self.n_clip, index % self.n_clip
 
         f_mic, f_ref, f_sph = self.f_list[idx]
+        # print("##", idx, index, f_mic)
+
         dirp = os.path.dirname(f_mic)
 
         dirname = Path(dirp)

@@ -19,7 +19,7 @@ from models.complexnn import (
 from models.conv_stft import STFT
 from models.ft_lstm import FTLSTM_RESNET
 from models.CMGAN.generator import DilatedDenseNet
-from models.Fusion.ms_cam import AFF, MS_CAM, MS_SELF_CAM
+from models.Fusion.ms_cam import AFF, MS_CAM, MS_SELF_CAM, MS_CAM_F
 
 
 class ChannelFreqAttention(nn.Module):
@@ -280,7 +280,8 @@ class ADPCRN_MS(nn.Module):
             nbinT = (nbinT << 1) - 1 if stride[-1 - idx] == 2 else nbinT
 
             self.conn_l.append(
-                MS_CAM(inp_channels=self.cnn_num[idx + 1], feature_size=nbin)
+                # MS_CAM(inp_channels=self.cnn_num[idx + 1], feature_size=nbin)
+                MS_CAM_F(inp_channels=self.cnn_num[idx + 1], feature_size=nbin, r=1)
                 # AFF(inp_channels=self.cnn_num[idx + 1], feature_size=nbin)
             )
 
@@ -352,16 +353,16 @@ class ADPCRN_MS(nn.Module):
                     )
                 )
 
-        self.encoder_fusion = nn.Sequential(
-            ComplexConv2d(
-                in_channels=2 * self.cnn_num[-1],
-                out_channels=self.cnn_num[-1],
-                kernel_size=(1, 1),
-                stride=(1, 1),
-            ),
-            InstanceNorm(nbin * self.cnn_num[-1]),
-            nn.PReLU(),
-        )
+        # self.encoder_fusion = nn.Sequential(
+        #     ComplexConv2d(
+        #         in_channels=2 * self.cnn_num[-1],
+        #         out_channels=self.cnn_num[-1],
+        #         kernel_size=(1, 1),
+        #         stride=(1, 1),
+        #     ),
+        #     InstanceNorm(nbin * self.cnn_num[-1]),
+        #     nn.PReLU(),
+        # )
 
         self.rnns_r = nn.Sequential(
             FTLSTM_RESNET(cnn_num[-1] // 2, rnn_hidden_num),
@@ -382,13 +383,13 @@ class ADPCRN_MS(nn.Module):
             # nn.PReLU(),
         )
 
-        self.post_conv = ComplexConv2d(
-            in_channels=2,
-            out_channels=2,
-            kernel_size=(1, 1),
-            stride=(1, 1),
-            padding=(0, 0),
-        )
+        # self.post_conv = ComplexConv2d(
+        #     in_channels=2,
+        #     out_channels=2,
+        #     kernel_size=(1, 1),
+        #     stride=(1, 1),
+        #     padding=(0, 0),
+        # )
 
         # self.dilateds = nn.ModuleList()
         # for _ in range(3):
@@ -424,8 +425,8 @@ class ADPCRN_MS(nn.Module):
         for idx, (lm, lr) in enumerate(zip(self.encoder_mic, self.encoder_rel)):
             spec = lm(spec)
             x = lr(x)  # x shape [B, C, T, F]
+            spec_store.append(spec)
             spec = self.conn_l[idx](x, spec)
-            spec_store.append(x)
             # mx = complex_cat([spec, x], dim=1)
             # spec_store.append(mx)
 
@@ -438,9 +439,10 @@ class ADPCRN_MS(nn.Module):
 
         # Fusion
         # x = torch.concat([spec, x], dim=1)
-        x = complex_cat([spec, x], dim=1)
-        x = self.encoder_fusion(x)
+        # x = complex_cat([spec, x], dim=1)
+        # x = self.encoder_fusion(x)
         # x = x + spec
+        x = spec
         x_r, x_i = torch.chunk(x, 2, dim=1)
 
         x_r = self.rnns_r(x_r)
@@ -463,9 +465,9 @@ class ADPCRN_MS(nn.Module):
         feat_r, feat_i = complex_apply_mask(specs_mic, x)
         x = torch.concat([feat_r, feat_i], dim=1)
 
-        feat = self.post_conv(x)
+        # feat = self.post_conv(x)
 
-        out_wav = self.stft.inverse(feat)  # B, 1, T
+        out_wav = self.stft.inverse(x)  # B, 1, T
         out_wav = torch.squeeze(out_wav, 1)
         out_wav = torch.clamp(out_wav, -1, 1)
 
@@ -572,15 +574,18 @@ class ADPCRN(nn.Module):
                     )
                 )
 
-        self.encoder_fusion = nn.Sequential(
-            ComplexConv2d(
-                in_channels=self.cnn_num[-1],
-                out_channels=self.cnn_num[-1],
-                kernel_size=(1, 1),
-                stride=(1, 1),
-            ),
-            InstanceNorm(nbin * self.cnn_num[-1]),
-            nn.Tanh(),
+        # self.encoder_fusion = nn.Sequential(
+        #     ComplexConv2d(
+        #         in_channels=self.cnn_num[-1],
+        #         out_channels=self.cnn_num[-1],
+        #         kernel_size=(1, 1),
+        #         stride=(1, 1),
+        #     ),
+        #     InstanceNorm(nbin * self.cnn_num[-1]),
+        #     nn.Tanh(),
+        # )
+        self.encoder_fusion = MS_CAM_F(
+            inp_channels=self.cnn_num[-1], feature_size=nbin, r=1
         )
 
         self.rnns_r = nn.Sequential(
@@ -644,7 +649,7 @@ class ADPCRN(nn.Module):
         for idx, (lm, lr) in enumerate(zip(self.encoder_mic, self.encoder_rel)):
             spec = lm(spec)
             x = lr(x)  # x shape [B, C, T, F]
-            spec_store.append(x)
+            spec_store.append(spec)
             # mx = complex_cat([spec, x], dim=1)
             # spec_store.append(mx)
 
@@ -659,8 +664,9 @@ class ADPCRN(nn.Module):
         # x = torch.concat([spec, x], dim=1)
         # x = complex_cat([spec, x], dim=1)
         # x = self.encoder_fusion(x)
-        x = x + spec
+        # x = x + spec
         # x = self.encoder_fusion(x) * spec
+        x = self.encoder_fusion(x, spec)
         x_r, x_i = torch.chunk(x, 2, dim=1)
 
         x_r = self.rnns_r(x_r)
