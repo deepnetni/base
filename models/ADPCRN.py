@@ -24,6 +24,22 @@ from models.CMGAN.generator import DilatedDenseNet
 from models.Fusion.ms_cam import AFF, MS_CAM, MS_SELF_CAM, MS_CAM_F
 
 
+class TFusion(nn.Module):
+    def __init__(self, inp_channel: int) -> None:
+        self.l = nn.Sequential(
+            nn.Conv2d(
+                in_channels=inp_channel,
+                out_channels=inp_channel,
+                kernel_size=1,
+                stride=0,
+            ),
+            nn.Tanh(),
+        )
+
+    def forward(self, x, y):
+        return self.l(x) * y
+
+
 class FTAttention(nn.Module):
     def __init__(self, inp_channel: int, winL: int = 10) -> None:
         super().__init__()
@@ -218,14 +234,6 @@ class CRN_AEC(nn.Module):
             FTLSTM_RESNET(cnn_num[-1] // 2, rnn_hidden_num),
         )
 
-        self.post_conv = ComplexConv1d(
-            in_channels=2 * self.fft_dim,
-            out_channels=2 * self.fft_dim,
-            kernel_size=1,
-            stride=1,
-            padding=0,
-        )
-
     def forward(self, mic, ref):
         """
         inputs: shape is [B, T] or [B, 1, T]
@@ -234,12 +242,8 @@ class CRN_AEC(nn.Module):
         specs_mic = self.stft.transform(mic)  # [B, 2, T, F]
         specs_ref = self.stft.transform(ref)
 
-        specs_mic_real, specs_mic_imag = specs_mic.chunk(2, dim=1)  # B,1,T,F
+        specs_mic_real, specs_mic_imag = specs_mic.chunk(2, dim=1)  # B,2,T,F
         specs_ref_real, specs_ref_imag = specs_ref.chunk(2, dim=1)
-
-        specs_mix = torch.concat(
-            [specs_mic_real, specs_ref_real, specs_mic_imag, specs_ref_imag], dim=1
-        )  # [B, 4, T, F]
 
         feat = torch.stack([specs_mic_real, specs_mic_imag], dim=1)
 
@@ -629,9 +633,10 @@ class ADPCRN(nn.Module):
         #     InstanceNorm(nbin * self.cnn_num[-1]),
         #     nn.Tanh(),
         # )
-        self.encoder_fusion = MS_CAM_F(
-            inp_channels=self.cnn_num[-1], feature_size=nbin, r=1
-        )
+        # self.encoder_fusion = MS_CAM_F(
+        #     inp_channels=self.cnn_num[-1], feature_size=nbin, r=1
+        # )
+        self.encoder_fusion = TFusion(inp_channel=self.cnn_num[-1])
         # self.encoder_fusion = nn.Sequential(
         #     ComplexConv2d(
         #         in_channels=2 * self.cnn_num[-1],
@@ -719,9 +724,9 @@ class ADPCRN(nn.Module):
         # x = torch.concat([spec, x], dim=1)
         # x = complex_cat([spec, x], dim=1)
         # x = self.encoder_fusion(x)
-        x = x + spec
+        # x = x + spec
         # x = self.encoder_fusion(x) * spec
-        # x = self.encoder_fusion(x, spec)
+        x = self.encoder_fusion(x, spec)
         x_r, x_i = torch.chunk(x, 2, dim=1)
 
         x_r = self.rnns_r(x_r)
@@ -1143,7 +1148,8 @@ class ADPCRN_ATTN(nn.Module):
         # x = torch.concat([spec, x], dim=1)
         # x = complex_cat([spec, x], dim=1)
         # x = self.encoder_fusion(x)
-        x = self.attn(x, x, spec)
+        x = self.encoder_fusion(x, spec)
+        x = self.attn(x, x, x)
         # x = x + spec
         x_r, x_i = torch.chunk(x, 2, dim=1)
 

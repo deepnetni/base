@@ -1,3 +1,4 @@
+import os
 import torch
 from torch import Tensor
 from torch.utils.data import DataLoader
@@ -6,7 +7,7 @@ import numpy as np
 from utils.Engine import Engine
 from utils.ini_opts import read_ini
 from utils.trunk import AECTrunk
-from utils.record import REC
+from utils.record import REC, RECDepot
 from utils.losses import loss_compressed_mag, loss_sisnr, loss_pmsqe
 from tqdm import tqdm
 from typing import Dict
@@ -26,7 +27,7 @@ import argparse
 
 
 class Train(Engine):
-    def __init__(self, train_dset, valid_dset, batch_sz, **kwargs):
+    def __init__(self, train_dset, valid_dset, vtest_dset, batch_sz, **kwargs):
         super().__init__(**kwargs)
         self._set_seed()
         self.train_loader = DataLoader(
@@ -44,6 +45,8 @@ class Train(Engine):
             pin_memory=True,
             shuffle=True,
         )
+
+        self.vtest_loader = vtest_dset
 
         self.stft = STFT(nframe=512, nhop=256).to(self.device)
         self.stft.eval()
@@ -202,6 +205,62 @@ class Train(Engine):
 
         return metric_rec.state_dict()
 
+    def vtest_fn(self, sph: Tensor, enh: Tensor) -> Dict:
+        sisnr = self._si_snr(sph, enh)
+        sisnr = np.mean(sisnr)
+
+        pesq = self._pesq(
+            sph.cpu().detach().numpy(),
+            enh.cpu().detach().numpy(),
+            fs=16000,
+            norm=False,
+        )
+        pesq = np.mean(pesq)
+        # composite = self._eval(clean, enh, 16000)
+        # composite = {k: np.mean(v) for k, v in composite.items()}
+        # pesq = composite.pop("pesq")
+
+        stoi = self._stoi(
+            sph.cpu().detach().numpy(),
+            enh.cpu().detach().numpy(),
+            fs=16000,
+        )
+        stoi = np.mean(stoi)
+
+        state = {"pesq": pesq, "stoi": stoi, "sisnr": sisnr}
+
+        # return dict(state, **composite)
+        return state
+
+    def _vtest_each_epoch(self, epoch):
+        metric_rec = RECDepot()
+
+        pbar = tqdm(
+            self.vtest_loader,
+            total=len(self.vtest_loader),
+            ncols=120,
+            leave=False,
+            desc=f"vTest-{epoch}/{self.epochs}",
+        )
+
+        for mic, ref, sph, fname in pbar:
+            mic = mic.to(self.device)  # b,c,t,f
+            ref = ref.to(self.device)  # b,c,t,f
+            sph = sph.to(self.device)  # b,c,t,f
+
+            item, fname = os.path.split(fname)
+
+            with torch.no_grad():
+                enh = self.net(mic, ref)
+
+            metric_dict = self.vtest_fn(sph[:, : enh.shape[-1]], enh)
+
+            # record the loss
+            metric_rec.update(item, metric_dict)
+            # pbar.set_postfix(**metric_rec.state_dict())
+
+        return metric_rec.state_dict()
+
     def _net_flops(self) -> int:
         from thop import profile
         import copy
@@ -324,6 +383,13 @@ if __name__ == "__main__":
             flist="gene-aec-4-1.csv",
             patten="**/*mic.wav",
             keymap=("mic", "ref", "sph"),
+            align=True,
+        ),
+        AECTrunk(
+            cfg["dataset"]["vtest_dset"],
+            flist="aec-test-set.csv",
+            patten="**/*mic.wav",
+            keymap=("mic", "lpb", "sph"),
             align=True,
         ),
         net=net,

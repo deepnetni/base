@@ -73,6 +73,7 @@ class MS_CAM_F(nn.Module):
         x_ = self.layer_global(x_) + self.layer_local(x_)
         w = x_.sigmoid()
         return x * w + (1 - w) * y
+        # return (x + y).tanh() * x_.sigmoid()
 
 
 class MS_CAM(nn.Module):
