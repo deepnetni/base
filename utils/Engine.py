@@ -6,11 +6,14 @@ from itertools import repeat
 from pathlib import Path
 from typing import Dict, Optional
 
-import matplotlib.pyplot as plt
+import matplotlib
+
+matplotlib.use("Agg")
 import numpy as np
 import torch
 import torch.nn as nn
 from joblib import Parallel, delayed
+from matplotlib import pyplot as plt
 from torch.optim import Optimizer, lr_scheduler
 from torch.utils.data import Dataset
 from torch.utils.tensorboard.writer import SummaryWriter
@@ -47,6 +50,7 @@ class Engine(object):
         scheduler: str = "stepLR",
         seed: int = 0,
         valid_per_epoch: int = 1,
+        vtest_per_epoch: int = 0,
         valid_first: bool = False,
     ):
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -57,6 +61,7 @@ class Engine(object):
         self.epochs = epochs
         self.start_epoch = 1
         self.valid_per_epoch = valid_per_epoch
+        self.vtest_per_epoch = vtest_per_epoch
         self.best_score = torch.finfo(torch.float32).min
         self.seed = seed
 
@@ -170,6 +175,7 @@ class Engine(object):
         }  # {"pesq":,"csig":,"cbak","cvol"}
 
     def _set_seed(self, seed: Optional[int] = None):
+        # make sure the dataloader return the same series under different PCs
         torch.manual_seed(seed if seed is not None else self.seed)
 
     def _draw_spectrogram(self, epoch, *args, **kwargs):
@@ -239,38 +245,6 @@ class Engine(object):
         size = sum(p.numel() * p.element_size() for p in self.net.parameters())
         return total, trainable, size
 
-    def fit(self):
-        for i in range(self.start_epoch, self.epochs + 1):
-            if self.valid_first is False:
-                self.net.train()
-
-                loss = self._fit_each_epoch(i)
-                self.scheduler.step()
-                self._print("Loss", loss, i)
-                self._save_ckpt(i, is_best=False)
-
-            self.valid_first = False
-            # valid_first is True
-            if self.valid_per_epoch != 0 and i % self.valid_per_epoch == 0:
-                self.net.eval()
-                score = self._valid_each_epoch(i)
-                self._print("Eval", score, i)
-                if score["score"] > self.best_score:
-                    self.best_score = score["score"]
-                    self._save_ckpt(i, is_best=True)
-
-    def _print(self, tag: str, state_dict: Dict, epoch: int):
-        """
-        :param state_dict: {"loss1":1, "loss2":2} or {"i1":{"k1":v1,"k2":v2},"i2":{..}}
-        :param epoch:
-        :return:
-        """
-        for k, v in state_dict.items():
-            if isinstance(v, dict):
-                self.writer.add_scalars(f"{tag}/{k}", v, epoch)
-            else:
-                self.writer.add_scalar(f"{tag}/{k}", v, epoch)
-
     def _save_ckpt(self, epoch, is_best=False):
         """Could be overwritten by the subclass"""
 
@@ -302,6 +276,48 @@ class Engine(object):
         self.scheduler.load_state_dict(ckpt["scheduler"])
         self.net.load_state_dict(ckpt["net"])
 
+    def _print(self, tag: str, state_dict: Dict, epoch: int):
+        """
+        :param state_dict: {"loss1":1, "loss2":2} or {"i1":{"k1":v1,"k2":v2},"i2":{..}}
+        :param epoch:
+        :return:
+        """
+        for k, v in state_dict.items():
+            if isinstance(v, dict):
+                self.writer.add_scalars(f"{tag}/{k}", v, epoch)
+            else:
+                self.writer.add_scalar(f"{tag}/{k}", v, epoch)
+
+    def fit(self):
+        for i in range(self.start_epoch, self.epochs + 1):
+            if self.valid_first is False:
+                self.net.train()
+
+                loss = self._fit_each_epoch(i)
+                self.scheduler.step()
+                self._print("Loss", loss, i)
+                self._save_ckpt(i, is_best=False)
+
+            self.valid_first = False
+            # valid_first is True
+            if self.valid_per_epoch != 0 and i % self.valid_per_epoch == 0:
+                self.net.eval()
+                score = self._valid_each_epoch(i)
+                self._print("Eval", score, i)
+                if score["score"] > self.best_score:
+                    self.best_score = score["score"]
+                    self._save_ckpt(i, is_best=True)
+
+            if self.vtest_per_epoch != 0 and i % self.vtest_per_epoch == 0:
+                self.net.eval()
+                score = self._vtest_each_epoch(
+                    i
+                )  # {"-5":{"pesq":v,"stoi":v},"0":{...}}
+                out = ""
+                for k, v in score.items():
+                    out += f"{k}:{v} " + "\n"
+                self.writer.add_text("Test", out, i)
+
     def _net_flops(self) -> int:
         # from thop import profile
         # import copy
@@ -315,5 +331,9 @@ class Engine(object):
         # return {"loss": 0}
 
     def _valid_each_epoch(self, epoch: int) -> Dict:
+        raise NotImplementedError
+        # return {"score": 0}
+
+    def _vtest_each_epoch(self, epoch: int) -> Dict[str, Dict]:
         raise NotImplementedError
         # return {"score": 0}

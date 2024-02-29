@@ -397,14 +397,21 @@ class AECTrunk(Dataset):
         self.pick_idx = 0
         return self
 
-    def __next__(self) -> Tuple[torch.Tensor, torch.Tensor, str]:
+    def __next__(
+        self,
+    ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor], str]:
         """used for predict api"""
-        if self.pick_idx > len(self.f_list):
+        if self.pick_idx >= len(self.f_list):
             raise StopIteration
 
-        mic_fname, ref_fname, _ = self.f_list[self.pick_idx]
+        mic_fname, ref_fname, sph_fname = self.f_list[self.pick_idx]
         d_mic, fs_1 = audioread(mic_fname, sub_mean=True, target_level=self.norm)
         d_ref, fs_2 = audioread(ref_fname, sub_mean=True, target_level=self.norm)
+        try:
+            d_sph, _ = audioread(sph_fname, sub_mean=True, target_level=self.norm)
+        except Exception as e:
+            d_sph = None
+
         assert fs_1 == fs_2
 
         if fs_1 != self.tgt_fs:
@@ -430,6 +437,7 @@ class AECTrunk(Dataset):
         return (
             torch.from_numpy(d_mic[:N]).float()[None, :],
             torch.from_numpy(d_ref[:N]).float()[None, :],
+            torch.from_numpy(d_sph[:N]).float()[None, :] if d_sph is not None else None,
             fname,
         )
 
