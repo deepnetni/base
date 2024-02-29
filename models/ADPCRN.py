@@ -1,6 +1,8 @@
 import sys
 from pathlib import Path
 
+from einops import rearrange
+
 sys.path.append(str(Path(__file__).parent.parent))
 from typing import List, Optional
 
@@ -20,6 +22,45 @@ from models.conv_stft import STFT
 from models.ft_lstm import FTLSTM_RESNET
 from models.CMGAN.generator import DilatedDenseNet
 from models.Fusion.ms_cam import AFF, MS_CAM, MS_SELF_CAM, MS_CAM_F
+
+
+class FTAttention(nn.Module):
+    def __init__(self, inp_channel: int, winL: int = 10) -> None:
+        super().__init__()
+        self.attn_f = nn.MultiheadAttention(
+            embed_dim=inp_channel, num_heads=2, batch_first=True
+        )
+
+        self.attn_t = nn.MultiheadAttention(
+            embed_dim=inp_channel, num_heads=2, batch_first=True
+        )
+        self.attn_window = winL
+
+    def forward(self, k, q, v):
+        """b,c,t,f"""
+        nB = k.shape[0]
+        k_ = rearrange(k, "b c t f -> (b t) f c")
+        q_ = rearrange(q, "b c t f -> (b t) f c")
+        v_ = rearrange(v, "b c t f -> (b t) f c")
+
+        vf, _ = self.attn_f(k_, q_, v_)
+        v = v + rearrange(vf, "(b t) f c -> b c t f", b=nB)
+
+        nT = v.shape[2]
+        mask_1 = torch.ones(nT, nT, device=v.device).triu_(1).bool()  # TxT
+        mask_2 = (
+            torch.ones(nT, nT, device=v.device).tril_(-self.attn_window).bool()
+        )  # TxT
+        mask = mask_1 + mask_2
+
+        k_ = rearrange(k, "b c t f -> (b f) t c")
+        q_ = rearrange(q, "b c t f -> (b f) t c")
+        v_ = rearrange(v, "b c t f -> (b f) t c")
+
+        vt, _ = self.attn_t(k_, q_, v_, attn_mask=mask)
+        v = v + rearrange(vt, "(b f) t c -> b c t f", b=nB)
+
+        return v
 
 
 class ChannelFreqAttention(nn.Module):
@@ -353,6 +394,9 @@ class ADPCRN_MS(nn.Module):
                     )
                 )
 
+        # self.encoder_fusion = MS_CAM_F(
+        #     inp_channels=self.cnn_num[-1], feature_size=nbin, r=1
+        # )
         # self.encoder_fusion = nn.Sequential(
         #     ComplexConv2d(
         #         in_channels=2 * self.cnn_num[-1],
@@ -427,6 +471,7 @@ class ADPCRN_MS(nn.Module):
             x = lr(x)  # x shape [B, C, T, F]
             spec_store.append(spec)
             spec = self.conn_l[idx](x, spec)
+            # spec_store.append(spec)
             # mx = complex_cat([spec, x], dim=1)
             # spec_store.append(mx)
 
@@ -587,6 +632,16 @@ class ADPCRN(nn.Module):
         self.encoder_fusion = MS_CAM_F(
             inp_channels=self.cnn_num[-1], feature_size=nbin, r=1
         )
+        # self.encoder_fusion = nn.Sequential(
+        #     ComplexConv2d(
+        #         in_channels=2 * self.cnn_num[-1],
+        #         out_channels=self.cnn_num[-1],
+        #         kernel_size=(1, 1),
+        #         stride=(1, 1),
+        #     ),
+        #     InstanceNorm(nbin * self.cnn_num[-1]),
+        #     nn.PReLU(),
+        # )
 
         self.rnns_r = nn.Sequential(
             FTLSTM_RESNET(cnn_num[-1] // 2, rnn_hidden_num),
@@ -664,9 +719,9 @@ class ADPCRN(nn.Module):
         # x = torch.concat([spec, x], dim=1)
         # x = complex_cat([spec, x], dim=1)
         # x = self.encoder_fusion(x)
-        # x = x + spec
+        x = x + spec
         # x = self.encoder_fusion(x) * spec
-        x = self.encoder_fusion(x, spec)
+        # x = self.encoder_fusion(x, spec)
         x_r, x_i = torch.chunk(x, 2, dim=1)
 
         x_r = self.rnns_r(x_r)
@@ -799,16 +854,16 @@ class DPCRN_AEC(nn.Module):
                     )
                 )
 
-        self.encoder_fusion = nn.Sequential(
-            ComplexConv2d(
-                in_channels=2 * self.cnn_num[-1],
-                out_channels=self.cnn_num[-1],
-                kernel_size=(1, 1),
-                stride=(1, 1),
-            ),
-            InstanceNorm(nbin * self.cnn_num[-1]),
-            nn.PReLU(),
-        )
+        # self.encoder_fusion = nn.Sequential(
+        #     ComplexConv2d(
+        #         in_channels=2 * self.cnn_num[-1],
+        #         out_channels=self.cnn_num[-1],
+        #         kernel_size=(1, 1),
+        #         stride=(1, 1),
+        #     ),
+        #     InstanceNorm(nbin * self.cnn_num[-1]),
+        #     nn.PReLU(),
+        # )
 
         self.rnns_r = nn.Sequential(
             FTLSTM_RESNET(cnn_num[-1] // 2, rnn_hidden_num),
@@ -829,13 +884,13 @@ class DPCRN_AEC(nn.Module):
             # nn.PReLU(),
         )
 
-        self.post_conv = ComplexConv2d(
-            in_channels=2,
-            out_channels=2,
-            kernel_size=(1, 1),
-            stride=(1, 1),
-            padding=(0, 0),
-        )
+        # self.post_conv = ComplexConv2d(
+        #     in_channels=2,
+        #     out_channels=2,
+        #     kernel_size=(1, 1),
+        #     stride=(1, 1),
+        #     padding=(0, 0),
+        # )
 
         # self.dilateds = nn.ModuleList()
         # for _ in range(3):
@@ -907,9 +962,9 @@ class DPCRN_AEC(nn.Module):
         feat_r, feat_i = complex_apply_mask(specs_mic, x)
         x = torch.concat([feat_r, feat_i], dim=1)
 
-        feat = self.post_conv(x)
+        # feat = self.post_conv(x)
 
-        out_wav = self.stft.inverse(feat)  # B, 1, T
+        out_wav = self.stft.inverse(x)  # B, 1, T
         out_wav = torch.squeeze(out_wav, 1)
         out_wav = torch.clamp(out_wav, -1, 1)
 
@@ -1016,27 +1071,11 @@ class ADPCRN_ATTN(nn.Module):
                     )
                 )
 
-        # self.encoder_fusion = nn.Sequential(
-        #     ComplexConv2d(
-        #         in_channels=2 * self.cnn_num[-1],
-        #         out_channels=self.cnn_num[-1],
-        #         kernel_size=(1, 1),
-        #         stride=(1, 1),
-        #     ),
-        #     InstanceNorm(nbin * self.cnn_num[-1]),
-        #     nn.PReLU(),
-        # )
+        self.encoder_fusion = MS_CAM_F(
+            inp_channels=self.cnn_num[-1], feature_size=nbin, r=1
+        )
 
-        self.attn_prev = nn.Sequential(
-            Rearrange("b c t f-> b t (c f)"),
-        )
-        self.attn = nn.MultiheadAttention(
-            embed_dim=nbin * self.cnn_num[-1], num_heads=4, batch_first=True
-        )
-        self.attn_post = nn.Sequential(
-            Rearrange("b t (c f)-> b c t f", f=nbin),
-        )
-        self.attn_window = 10
+        self.attn = FTAttention(cnn_num[-1], 10)
 
         self.rnns_r = nn.Sequential(
             FTLSTM_RESNET(cnn_num[-1] // 2, rnn_hidden_num),
@@ -1055,14 +1094,6 @@ class ADPCRN_ATTN(nn.Module):
             # Rearrange("b t f c -> b c f t"),
             # InstanceNorm(cnn_num[-1] // 2 * nbin),
             # nn.PReLU(),
-        )
-
-        self.post_conv = ComplexConv2d(
-            in_channels=2,
-            out_channels=2,
-            kernel_size=(1, 1),
-            stride=(1, 1),
-            padding=(0, 0),
         )
 
         # self.dilateds = nn.ModuleList()
@@ -1093,33 +1124,26 @@ class ADPCRN_ATTN(nn.Module):
             [specs_mic_real, specs_ref_real, specs_mic_imag, specs_ref_imag], dim=1
         )  # [B, 4, F, T]
 
-        spec = specs_mic
         spec_store = []
-        for idx, layer in enumerate(self.encoder_mic):
-            spec = layer(spec)
-            spec_store.append(spec)
-
-        # feat = self.dilateds[0](feat)
-
+        spec = specs_mic
         x = specs_mix
-        for idx, layer in enumerate(self.encoder_rel):
-            x = layer(x)  # x shape [B, C, T, F]
+        for idx, (lm, lr) in enumerate(zip(self.encoder_mic, self.encoder_rel)):
+            spec = lm(spec)
+            x = lr(x)  # x shape [B, C, T, F]
+            spec_store.append(spec)
+            # spec_store.append(spec)
+            # mx = complex_cat([spec, x], dim=1)
+            # spec_store.append(mx)
 
         # x = self.dilateds[1](x)
 
         # Fusion
-        nT = x.shape[2]
-        mask_1 = torch.ones(nT, nT, device=x.device).triu_(1).bool()  # TxT
-        mask_2 = (
-            torch.ones(nT, nT, device=x.device).tril_(-self.attn_window).bool()
-        )  # TxT
-        mask = mask_1 + mask_2
+        # x = self.encoder_fusion(x, spec)
+
         # x = torch.concat([spec, x], dim=1)
         # x = complex_cat([spec, x], dim=1)
         # x = self.encoder_fusion(x)
-        x = self.attn_prev(x)
-        xt, _ = self.attn(x, x, self.attn_prev(spec), attn_mask=mask)
-        x = spec + self.attn_post(xt)
+        x = self.attn(x, x, spec)
         # x = x + spec
         x_r, x_i = torch.chunk(x, 2, dim=1)
 
@@ -1143,9 +1167,7 @@ class ADPCRN_ATTN(nn.Module):
         feat_r, feat_i = complex_apply_mask(specs_mic, x)
         x = torch.concat([feat_r, feat_i], dim=1)
 
-        feat = self.post_conv(x)
-
-        out_wav = self.stft.inverse(feat)  # B, 1, T
+        out_wav = self.stft.inverse(x)  # B, 1, T
         out_wav = torch.squeeze(out_wav, 1)
         out_wav = torch.clamp(out_wav, -1, 1)
 
