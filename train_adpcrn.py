@@ -172,7 +172,7 @@ class Train(Engine):
         pbar = tqdm(
             self.valid_loader,
             ncols=120,
-            leave=False,
+            leave=True,
             desc=f"Valid-{epoch}/{self.epochs}",
         )
 
@@ -374,6 +374,7 @@ if __name__ == "__main__":
         AECTrunk(
             cfg["dataset"]["train_dset"],
             flist="gene-aec-100-30.csv",
+            # flist="gene-aec-train-test.csv",
             patten="**/*mic.wav",
             keymap=("mic", "ref", "sph"),
             align=True,

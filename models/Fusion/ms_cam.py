@@ -51,7 +51,7 @@ class MS_CAM_F(nn.Module):
                 kernel_size=1,
                 stride=1,
                 padding=0,
-                groups=feature_size,
+                # groups=feature_size,
             ),
             nn.LayerNorm(inp_channels, feature_size),
             nn.PReLU(),
@@ -64,16 +64,13 @@ class MS_CAM_F(nn.Module):
                 # groups=feature_size // r,
             ),
             Rearrange("b f t c->b c t f"),
-            # Rearrange("b c t f-> b t c f"),
-            # nn.LayerNorm(inp_channels, 1)
-            # Rearrange("b t c f-> b c t f"),
         )
 
     def forward(self, x: torch.Tensor, y: torch.Tensor):
         x_ = x + y
         x_ = self.layer_global(x_) + self.layer_local(x_)
         w = x_.sigmoid()
-        return x * w + (1 - w) * y
+        return x * w + (1 - w) * y  # soft feature selection
         # return (x + y).tanh() * x_.sigmoid()
 
 

@@ -399,9 +399,9 @@ class ADPCRN(nn.Module):
         #     InstanceNorm(nbin * self.cnn_num[-1]),
         #     nn.Tanh(),
         # )
-        # self.encoder_fusion = MS_CAM_F(
-        #     inp_channels=self.cnn_num[-1], feature_size=nbin, r=1
-        # )
+        self.encoder_fusion = MS_CAM_F(
+            inp_channels=self.cnn_num[-1], feature_size=nbin, r=1
+        )
         # self.encoder_fusion = TFusion(inp_channel=self.cnn_num[-1])
         # self.encoder_fusion = nn.Sequential(
         #     ComplexConv2d(
@@ -480,9 +480,9 @@ class ADPCRN(nn.Module):
         # x = torch.concat([spec, x], dim=1)
         # x = complex_cat([spec, x], dim=1)
         # x = self.encoder_fusion(x)
-        x = x + spec
+        # x = x + spec
         # x = self.encoder_fusion(x) * spec
-        # x = self.encoder_fusion(x, spec)
+        x = self.encoder_fusion(x, spec)
         x_r, x_i = torch.chunk(x, 2, dim=1)
 
         x_r = self.rnns_r(x_r)
@@ -1396,6 +1396,7 @@ if __name__ == "__main__":
     inp = torch.randn(1, 16000)
     out = net(inp, inp)
     print(out.shape)
+    # torch.save(net.state_dict(), "31.pth")
 
     net = DPCRN_AEC(
         nframe=512,

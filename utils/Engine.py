@@ -22,19 +22,24 @@ from utils.composite_metrics import eval_composite
 from utils.logger import get_logger
 from utils.metrics import *
 
+log = get_logger("eng", mode="console")
+
 
 def setup_seed(seed: int = 0):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+    os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+    os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":16:8"
+    torch.use_deterministic_algorithms(True)
 
 
 setup_seed()
-
-log = get_logger("eng", mode="console")
 
 
 class Engine(object):
