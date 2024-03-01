@@ -1,3 +1,4 @@
+from einops import rearrange
 from einops.layers.torch import Rearrange
 import torch
 import torch.nn as nn
@@ -27,7 +28,7 @@ class MS_CAM_F(nn.Module):
                 kernel_size=1,
                 stride=1,
                 padding=0,
-                groups=feature_size,
+                # groups=feature_size,
             ),  # b,t,f,1
             nn.LayerNorm(1, feature_size),
             nn.PReLU(),
@@ -37,7 +38,7 @@ class MS_CAM_F(nn.Module):
                 kernel_size=1,
                 stride=1,
                 padding=0,
-                groups=feature_size // r,
+                # groups=feature_size // r,
             ),
             Rearrange("b f t c->b c t f"),
         )
@@ -60,7 +61,7 @@ class MS_CAM_F(nn.Module):
                 kernel_size=1,
                 stride=1,
                 padding=0,
-                groups=feature_size // r,
+                # groups=feature_size // r,
             ),
             Rearrange("b f t c->b c t f"),
             # Rearrange("b c t f-> b t c f"),
