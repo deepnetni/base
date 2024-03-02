@@ -29,21 +29,26 @@ import argparse
 class Train(Engine):
     def __init__(self, train_dset, valid_dset, vtest_dset, batch_sz, **kwargs):
         super().__init__(**kwargs)
-        self._set_seed()
+        # self._set_seed()
+        # g = torch.Generator()
+        # g.manual_seed(0)
         self.train_loader = DataLoader(
             train_dset,
             batch_size=batch_sz,
             num_workers=6,
             pin_memory=True,
             shuffle=True,
+            worker_init_fn=self._worker_set_seed,
+            # generator=g
         )
-        self._set_seed()
+        # self._set_seed()
         self.valid_loader = DataLoader(
             valid_dset,
             batch_size=batch_sz,
             num_workers=6,
             pin_memory=True,
             shuffle=True,
+            worker_init_fn=self._worker_set_seed,
         )
 
         self.vtest_loader = vtest_dset

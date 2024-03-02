@@ -179,6 +179,12 @@ class Engine(object):
             k: np.array(v) for k, v in out.items()
         }  # {"pesq":,"csig":,"cbak","cvol"}
 
+    @staticmethod
+    def _worker_set_seed(worker_id):
+        # seed = torch.initial_seed() % 2**32
+        np.random.seed(worker_id)
+        random.seed(worker_id)
+
     def _set_seed(self, seed: Optional[int] = None):
         # make sure the dataloader return the same series under different PCs
         torch.manual_seed(seed if seed is not None else self.seed)
