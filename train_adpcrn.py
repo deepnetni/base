@@ -15,6 +15,7 @@ from models.APC_SNR.apc_snr import APC_SNR_multi_filter
 from models.ADPCRN import (
     ADPCRN,
     ADPCRN_ATTN,
+    ADPCRN_PLUS,
     CRN_AEC,
     DPCRN_AEC,
     ADPCRN_Dilated,
@@ -284,6 +285,9 @@ def parse():
     parser.add_argument("--crn", help="crn aec model", action="store_true")
     parser.add_argument("--wo-sfp", help="without SFP path mode", action="store_true")
     parser.add_argument(
+        "--wfusion-plus", help="fusion with the atten method", action="store_true"
+    )
+    parser.add_argument(
         "--wfusion-att", help="fusion with the atten method", action="store_true"
     )
     parser.add_argument(
@@ -320,6 +324,17 @@ if __name__ == "__main__":
         cfg_fname = "config/config_adpcrn_crn.ini"
         cfg = read_ini(cfg_fname)
         net = CRN_AEC(
+            nframe=512,
+            nhop=256,
+            nfft=512,
+            cnn_num=[16, 32, 64, 128],
+            stride=[2, 2, 1, 1],
+            rnn_hidden_num=128,
+        )
+    elif args.wfusion_plus:  # 212
+        cfg_fname = "config/config_adpcrn_w_fusion_plus.ini"
+        cfg = read_ini(cfg_fname)
+        net = ADPCRN_PLUS(
             nframe=512,
             nhop=256,
             nfft=512,
@@ -378,8 +393,8 @@ if __name__ == "__main__":
     eng = Train(
         AECTrunk(
             cfg["dataset"]["train_dset"],
-            flist="gene-aec-100-30.csv",
-            # flist="gene-aec-train-test.csv",
+            # flist="gene-aec-100-30.csv",
+            flist="gene-aec-train-test.csv",
             patten="**/*mic.wav",
             keymap=("mic", "ref", "sph"),
             align=True,
