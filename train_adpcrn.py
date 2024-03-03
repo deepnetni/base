@@ -121,8 +121,7 @@ class Train(Engine):
         #     "pmsq": pmsq_score.detach(),
         # }
 
-        with torch.no_grad():
-            sc_loss, mag_loss = self.ms_stft_loss(enh, clean)
+        sc_loss, mag_loss = self.ms_stft_loss(enh, clean)
         loss = sc_loss + mag_loss
         return {
             "loss": loss,
@@ -273,7 +272,6 @@ class Train(Engine):
         return json.loads(out.read())
 
     def _vtest_each_epoch(self, epoch):
-
         vtest_metric = {}
 
         for vtest_loader in self.vtest_loader:
