@@ -11,6 +11,7 @@ from utils.ini_opts import read_ini
 from utils.trunk import AECTrunk
 from utils.record import REC, RECDepot
 from utils.losses import loss_compressed_mag, loss_sisnr, loss_pmsqe
+from utils.stft_loss import MultiResolutionSTFTLoss
 from tqdm import tqdm
 from typing import Dict, Optional, Union, List
 from models.APC_SNR.apc_snr import APC_SNR_multi_filter
@@ -68,6 +69,13 @@ class Train(Engine):
         self.stft = STFT(nframe=512, nhop=256).to(self.device)
         self.stft.eval()
 
+        self.ms_stft_loss = MultiResolutionSTFTLoss(
+            fft_sizes=[960, 480, 240],
+            hop_sizes=[480, 240, 120],
+            win_lengths=[960, 480, 240],
+        ).to(self.device)
+        self.ms_stft_loss.eval()
+
         # self.APC_criterion = APC_SNR_multi_filter(
         #     model_hop=128,
         #     model_winlen=512,
@@ -98,19 +106,28 @@ class Train(Engine):
         #     "apc_snr": loss_APC_SNR.detach(),
         # }
 
-        sisnr_lv = loss_sisnr(clean, enh)
+        # sisnr_lv = loss_sisnr(clean, enh)
+        # with torch.no_grad():
+        #     specs_enh = self.stft.transform(enh)
+        #     specs_sph = self.stft.transform(clean)
+        # mse_mag, mse_pha = loss_compressed_mag(specs_sph, specs_enh)
+        # pmsq_score = loss_pmsqe(specs_sph, specs_enh)
+        # loss = 0.05 * sisnr_lv + mse_pha + mse_mag + pmsq_score
+        # return {
+        #     "loss": loss,
+        #     "sisnr": sisnr_lv.detach(),
+        #     "mag": mse_mag.detach(),
+        #     "pha": mse_pha.detach(),
+        #     "pmsq": pmsq_score.detach(),
+        # }
+
         with torch.no_grad():
-            specs_enh = self.stft.transform(enh)
-            specs_sph = self.stft.transform(clean)
-        mse_mag, mse_pha = loss_compressed_mag(specs_sph, specs_enh)
-        pmsq_score = loss_pmsqe(specs_sph, specs_enh)
-        loss = 0.3 * sisnr_lv + mse_pha + mse_mag + pmsq_score
+            sc_loss, mag_loss = self.ms_stft_loss(enh, clean)
+        loss = sc_loss + mag_loss
         return {
             "loss": loss,
-            "sisnr": sisnr_lv.detach(),
-            "mag": mse_mag.detach(),
-            "pha": mse_pha.detach(),
-            "pmsq": pmsq_score.detach(),
+            "sc": sc_loss.detach(),
+            "mag": mag_loss.detach(),
         }
 
         # pase loss
