@@ -2,7 +2,7 @@ import os
 from matplotlib import shutil
 import torch
 from torch import Tensor
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 import numpy as np
 
 from utils.Engine import Engine
@@ -12,7 +12,7 @@ from utils.trunk import AECTrunk
 from utils.record import REC, RECDepot
 from utils.losses import loss_compressed_mag, loss_sisnr, loss_pmsqe
 from tqdm import tqdm
-from typing import Dict, Optional, Union
+from typing import Dict, Optional, Union, List
 from models.APC_SNR.apc_snr import APC_SNR_multi_filter
 from models.ADPCRN import (
     ADPCRN,
@@ -30,7 +30,14 @@ import argparse
 
 
 class Train(Engine):
-    def __init__(self, train_dset, valid_dset, vtest_dset, batch_sz, **kwargs):
+    def __init__(
+        self,
+        train_dset: Dataset,
+        valid_dset: Dataset,
+        vtest_dset: Union[List[Dataset], Dataset],
+        batch_sz: int,
+        **kwargs,
+    ):
         super().__init__(**kwargs)
         self.train_loader = DataLoader(
             train_dset,
@@ -54,9 +61,8 @@ class Train(Engine):
             # generator=g,
         )
 
-        self.vtest_loader = vtest_dset
-        self.vtest_outdir = os.path.join(
-            self.vtest_outdir, os.path.split(vtest_dset.dirname)[-1]
+        self.vtest_loader = (
+            [vtest_dset] if isinstance(vtest_dset, Dataset) else vtest_dset
         )
 
         self.stft = STFT(nframe=512, nhop=256).to(self.device)
@@ -97,8 +103,8 @@ class Train(Engine):
             specs_enh = self.stft.transform(enh)
             specs_sph = self.stft.transform(clean)
         mse_mag, mse_pha = loss_compressed_mag(specs_sph, specs_enh)
-        # pmsq_score = loss_pmsqe(specs_sph, specs_enh)
-        loss = 0.05 * sisnr_lv + mse_pha + mse_mag  # + pmsq_score
+        pmsq_score = loss_pmsqe(specs_sph, specs_enh)
+        loss = 0.3 * sisnr_lv + mse_pha + mse_mag + pmsq_score
         return {
             "loss": loss,
             "sisnr": sisnr_lv.detach(),
@@ -243,57 +249,63 @@ class Train(Engine):
         # return dict(state, **composite)
         return state
 
-    def vtest_mos(self):
+    def vtest_aecmos(self, src_dir, out_dir):
         import json
 
-        out = os.popen(
-            f"python scripts/aecmos.py --src {self.vtest_loader.dirname}  --est {self.vtest_outdir}"
-        )
+        out = os.popen(f"python scripts/aecmos.py --src {src_dir}  --est {out_dir}")
         return json.loads(out.read())
 
     def _vtest_each_epoch(self, epoch):
-        metric_rec = RECDepot()
-        use_aecmos = False
 
-        pbar = tqdm(
-            self.vtest_loader,
-            total=len(self.vtest_loader),
-            ncols=120,
-            leave=False,
-            desc=f"vTest-{epoch}/{self.epochs}",
-        )
-        shutil.rmtree(self.vtest_outdir) if os.path.exists(self.vtest_outdir) else None
+        vtest_metric = {}
 
-        for mic, ref, sph, fname in pbar:
-            mic = mic.to(self.device)  # b,c,t,f
-            ref = ref.to(self.device)  # b,c,t,f
-            sph = sph.to(self.device) if sph is not None else None  # b,c,t,f
+        for vtest_loader in self.vtest_loader:
+            metric_rec = RECDepot()
+            use_aecmos = False
 
-            item, _ = os.path.split(fname)
-
-            with torch.no_grad():
-                enh = self.net(mic, ref)
-
-            audiowrite(
-                os.path.join(self.vtest_outdir, fname),
-                enh.cpu().squeeze().numpy(),
-                16000,
+            dirname = os.path.split(vtest_loader.dirname)[-1]
+            pbar = tqdm(
+                vtest_loader,
+                total=len(vtest_loader),
+                ncols=120,
+                leave=False,
+                desc=f"vTest-{epoch}/{dirname}",
             )
+            vtest_outdir = os.path.join(self.vtest_outdir, dirname)
+            shutil.rmtree(vtest_outdir) if os.path.exists(vtest_outdir) else None
 
-            if sph is None:
-                use_aecmos = True
-                continue
+            for mic, ref, sph, fname in pbar:
+                mic = mic.to(self.device)  # b,c,t,f
+                ref = ref.to(self.device)  # b,c,t,f
+                sph = sph.to(self.device) if sph is not None else None  # b,c,t,f
 
-            metric_dict = self.vtest_fn(sph[:, : enh.shape[-1]], enh)
-            # record the loss
-            metric_rec.update(item, metric_dict)
-            # pbar.set_postfix(**metric_rec.state_dict())
+                item = os.path.split(os.path.dirname(fname))[-1]
 
-        if use_aecmos:
-            metric_dict = self.vtest_mos()
-            return metric_dict
+                with torch.no_grad():
+                    enh = self.net(mic, ref)
 
-        return metric_rec.state_dict()
+                audiowrite(
+                    os.path.join(self.vtest_outdir, fname),
+                    enh.cpu().squeeze().numpy(),
+                    16000,
+                )
+
+                if sph is None:
+                    use_aecmos = True
+                    continue
+
+                metric_dict = self.vtest_fn(sph[:, : enh.shape[-1]], enh)
+                # record the loss
+                metric_rec.update(item, metric_dict)
+                # pbar.set_postfix(**metric_rec.state_dict())
+
+            if use_aecmos:
+                metric_dict = self.vtest_aecmos(vtest_loader.dirname, vtest_outdir)
+                vtest_metric[dirname] = metric_dict
+            else:
+                vtest_metric[dirname] = metric_rec.state_dict()
+
+        return vtest_metric
 
     def _net_flops(self) -> int:
         from thop import profile
@@ -419,6 +431,22 @@ if __name__ == "__main__":
 
     print("##", cfg_fname)
 
+    vtests = list(
+        map(lambda x: x.strip("\n"), cfg["dataset"]["vtest_dset"].strip(",").split(","))
+    )
+
+    vtests = [
+        AECTrunk(
+            dirname,
+            # flist="aec-test-set.csv",
+            # flist="icassp_blind_2021.csv",
+            flist=os.path.split(dirname)[-1] + ".csv",
+            patten="**/*mic.wav",
+            keymap=("mic", "lpb", "sph"),
+            align=True,
+        )
+        for dirname in vtests
+    ]
     init = cfg["config"]
     eng = Train(
         AECTrunk(
@@ -436,6 +464,7 @@ if __name__ == "__main__":
             keymap=("mic", "ref", "sph"),
             align=True,
         ),
+        vtests,
         # AECTrunk(
         #     cfg["dataset"]["vtest_dset"],
         #     # flist="aec-test-set.csv",
@@ -444,21 +473,21 @@ if __name__ == "__main__":
         #     keymap=("mic", "lpb", "sph"),
         #     align=True,
         # ),
-        AECTrunk(
-            cfg["dataset"]["vtest_dset"],
-            # flist="aec-test-set.csv",
-            flist="icassp_blind_2021.csv",
-            patten="**/*mic.wav",
-            keymap=("mic", "lpb", "sph"),
-            align=True,
-        ),
+        # AECTrunk(
+        #     cfg["dataset"]["vtest_dset"],
+        #     # flist="aec-test-set.csv",
+        #     flist="icassp_blind_2021.csv",
+        #     patten="**/*mic.wav",
+        #     keymap=("mic", "lpb", "sph"),
+        #     align=True,
+        # ),
         net=net,
         batch_sz=4,
-        valid_first=False,
+        valid_first=True,
         **init,
     )
     print(eng)
     if args.test:
-        eng.test(os.path.split(cfg["dataset"]["vtest_dset"])[-1], -2)
+        eng.test(os.path.split(cfg["dataset"]["vtest_dset"])[-1])
     else:
         eng.fit()

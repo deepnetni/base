@@ -20,12 +20,17 @@ from utils.gcc_phat import gcc_phat
 from utils.logger import get_logger
 
 
-def load_f_list(fname: str, relative: Union[str, Tuple[str, ...], None] = None) -> List:
+def load_f_list(
+    fname: str,
+    relative: Union[str, Tuple[str, ...], None] = None,
+    dirname: Optional[str] = None,
+) -> List:
     """
     relative: str or tuple of str each corresponding to element in the file.
     return: [(f1, f2..), (...)]
     """
     f_list = []
+    fname = os.path.join(dirname, fname) if dirname is not None else fname
     with open(fname, "r+") as fp:
         ctx = csv.reader(fp)
         for element in ctx:
@@ -44,12 +49,19 @@ def load_f_list(fname: str, relative: Union[str, Tuple[str, ...], None] = None) 
 
 
 def save_f_list(
-    fname: str, f_list: List, relative: Union[str, Tuple[str, ...], None] = None
+    fname: str,
+    f_list: List,
+    relative: Union[str, Tuple[str, ...], None] = None,
+    dirname: Optional[str] = None,
 ):
     """
     fname: csv file contains the training files path with format [(f1, f2..), (f1, f2)]
     relative: str or tuple of str each corresponding to element in f_list
     """
+    if dirname is not None:
+        os.makedirs(dirname) if not os.path.exists(dirname) else None
+        fname = os.path.join(dirname, fname)
+
     with open(fname, "w+") as fp:
         writer = csv.writer(fp)
         for f in f_list:
@@ -130,10 +142,12 @@ class NSTrunk(Dataset):
         seed: Optional[int] = None,
         norm: Optional[int] = None,
         return_abspath: bool = False,
+        csv_outdir: str = "csvs",
     ):
         super().__init__()
         self.dir = Path(dirname)
         self.logger = get_logger(dirname)
+        self.csv_outdir = csv_outdir
 
         self.f_list = self._prepare(flist, patten, keymap, clean_dirname)
         if seed is not None:
@@ -172,6 +186,7 @@ class NSTrunk(Dataset):
                     str(self.dir),
                     str(self.dir) if clean_dirname is None else clean_dirname,
                 ),
+                dirname=self.csv_outdir,
             )
         else:
             f_list = []
@@ -199,6 +214,7 @@ class NSTrunk(Dataset):
                     str(self.dir),
                     str(self.dir) if clean_dirname is None else clean_dirname,
                 ),
+                dirname=self.csv_outdir,
             ) if fname is not None else None
         return f_list
 
@@ -236,7 +252,9 @@ class NSTrunk(Dataset):
             self.pick_idx += 1
 
             fname = (
-                fname if self.return_abspath else str(Path(fname).relative_to(self.dir))
+                fname
+                if self.return_abspath
+                else str(Path(fname).relative_to(self.dir.parent))
             )
             return torch.from_numpy(data).float()[None, :], fname
         else:
@@ -291,6 +309,7 @@ class AECTrunk(Dataset):
         norm: Optional[int] = None,
         return_abspath: bool = False,
         align: bool = False,
+        csv_outdir: str = "csvs",
         ne_flag=["NE"],
         dt_flag=["DT"],
         fe_flag=["FE"],
@@ -298,6 +317,7 @@ class AECTrunk(Dataset):
         super().__init__()
         self.dir = Path(dirname)
         self.logger = get_logger(dirname)
+        self.csv_outdir = csv_outdir
 
         self.f_list = self._prepare(flist, patten, keymap)
         if seed is not None:
@@ -331,7 +351,7 @@ class AECTrunk(Dataset):
         fname: file path of a file list
         """
         if fname is not None and os.path.exists(fname):
-            f_list = load_f_list(fname, str(self.dir))
+            f_list = load_f_list(fname, str(self.dir), dirname=self.csv_outdir)
             self.logger.info(f"Load flist {fname}")
         else:
             f_list = []
@@ -344,7 +364,9 @@ class AECTrunk(Dataset):
                 f_sph = os.path.join(dirp, f_sph)
                 f_list.append((f_mic, f_ref, f_sph))
 
-            save_f_list(fname, f_list, str(self.dir)) if fname is not None else None
+            save_f_list(
+                fname, f_list, str(self.dir), dirname=self.csv_outdir
+            ) if fname is not None else None
         return f_list
 
     def __len__(self):
@@ -434,7 +456,7 @@ class AECTrunk(Dataset):
         fname = (
             mic_fname
             if self.return_abspath
-            else str(Path(mic_fname).relative_to(self.dir))
+            else str(Path(mic_fname).relative_to(self.dir.parent))
         )
 
         N = min(len(d_ref), len(d_mic))

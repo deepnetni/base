@@ -2,7 +2,8 @@
 __pycache__
 trained/
 *DS_Store
-trained_AEC/
+trained_AEC*/
 *.csv
 *draw/
 vtest/
+csvs/

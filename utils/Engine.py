@@ -329,23 +329,29 @@ class Engine(object):
             if self.vtest_per_epoch != 0 and i % self.vtest_per_epoch == 0:
                 self.net.eval()
                 # {"-5":{"pesq":v,"stoi":v},"0":{...}}
-                score = self._vtest_each_epoch(i)
-                out = ""
-                for k, v in score.items():
-                    out += f"{k}:{v} " + "\n"
-                self.writer.add_text("Test", out, i)
-                self._print("Test", score, i)
+                scores = self._vtest_each_epoch(i)
+                for name, score in scores.items():
+                    out = ""
+                    for k, v in score.items():
+                        out += f"{k}:{v} " + "\n"
+                    self.writer.add_text(f"Test-{name}", out, i)
+                    self._print(f"Test-{name}", score, i)
 
-    def test(self, name: str, epoch: int = -1):
+    def test(self, name: str, epoch: Optional[int] = None):
+        if epoch is None:
+            epoch = (
+                self.start_epoch - 1 if self.valid_first is False else self.start_epoch
+            )
         self.net.eval()
         # {"-5":{"pesq":v,"stoi":v},"0":{...}}
-        score = self._vtest_each_epoch(epoch)
+        scores = self._vtest_each_epoch(epoch)
         # out = ""
         # for k, v in score.items():
         #     out += f"{k}:{v} " + "\n"
         # self.writer.add_text("Test", out, i)
-        self.writer.add_text(f"Test-{name}", json.dumps(score), epoch)
-        self._print(f"Test-{name}", score, epoch)
+        for name, score in scores.items():
+            self.writer.add_text(f"Test-{name}", json.dumps(score), epoch)
+            self._print(f"Test-{name}", score, epoch)
 
     def _net_flops(self) -> int:
         # from thop import profile
@@ -363,6 +369,7 @@ class Engine(object):
         raise NotImplementedError
         # return {"score": 0}
 
-    def _vtest_each_epoch(self, epoch: int) -> Dict[str, Dict]:
+    def _vtest_each_epoch(self, epoch: int) -> Dict[str, Dict[str, Dict]]:
+        # {"dir1":{"metric":v,..}, "d2":{..}}
+        # or {"dir1":{"subd1":{"metric":v,...},"sub2":{...}}, "dir2":{...}}
         raise NotImplementedError
-        # return {"score": 0}
