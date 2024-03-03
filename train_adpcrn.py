@@ -1,16 +1,18 @@
 import os
+from matplotlib import shutil
 import torch
 from torch import Tensor
 from torch.utils.data import DataLoader
 import numpy as np
 
 from utils.Engine import Engine
+from utils.audiolib import audiowrite
 from utils.ini_opts import read_ini
 from utils.trunk import AECTrunk
 from utils.record import REC, RECDepot
 from utils.losses import loss_compressed_mag, loss_sisnr, loss_pmsqe
 from tqdm import tqdm
-from typing import Dict
+from typing import Dict, Optional, Union
 from models.APC_SNR.apc_snr import APC_SNR_multi_filter
 from models.ADPCRN import (
     ADPCRN,
@@ -30,9 +32,6 @@ import argparse
 class Train(Engine):
     def __init__(self, train_dset, valid_dset, vtest_dset, batch_sz, **kwargs):
         super().__init__(**kwargs)
-        # self._set_seed()
-        # g = torch.Generator()
-        # g.manual_seed(0)
         self.train_loader = DataLoader(
             train_dset,
             batch_size=batch_sz,
@@ -40,9 +39,10 @@ class Train(Engine):
             pin_memory=True,
             shuffle=True,
             worker_init_fn=self._worker_set_seed,
-            # generator=g
+            generator=self._set_generator(),
         )
-        # self._set_seed()
+        # g = torch.Generator()
+        # g.manual_seed(0)
         self.valid_loader = DataLoader(
             valid_dset,
             batch_size=batch_sz,
@@ -50,9 +50,14 @@ class Train(Engine):
             pin_memory=True,
             shuffle=True,
             worker_init_fn=self._worker_set_seed,
+            generator=self._set_generator(),
+            # generator=g,
         )
 
         self.vtest_loader = vtest_dset
+        self.vtest_outdir = os.path.join(
+            self.vtest_outdir, os.path.split(vtest_dset.dirname)[-1]
+        )
 
         self.stft = STFT(nframe=512, nhop=256).to(self.device)
         self.stft.eval()
@@ -238,8 +243,17 @@ class Train(Engine):
         # return dict(state, **composite)
         return state
 
+    def vtest_mos(self):
+        import json
+
+        out = os.popen(
+            f"python scripts/aecmos.py --src {self.vtest_loader.dirname}  --est {self.vtest_outdir}"
+        )
+        return json.loads(out.read())
+
     def _vtest_each_epoch(self, epoch):
         metric_rec = RECDepot()
+        use_aecmos = False
 
         pbar = tqdm(
             self.vtest_loader,
@@ -248,22 +262,36 @@ class Train(Engine):
             leave=False,
             desc=f"vTest-{epoch}/{self.epochs}",
         )
+        shutil.rmtree(self.vtest_outdir) if os.path.exists(self.vtest_outdir) else None
 
         for mic, ref, sph, fname in pbar:
             mic = mic.to(self.device)  # b,c,t,f
             ref = ref.to(self.device)  # b,c,t,f
-            sph = sph.to(self.device)  # b,c,t,f
+            sph = sph.to(self.device) if sph is not None else None  # b,c,t,f
 
-            item, fname = os.path.split(fname)
+            item, _ = os.path.split(fname)
 
             with torch.no_grad():
                 enh = self.net(mic, ref)
 
-            metric_dict = self.vtest_fn(sph[:, : enh.shape[-1]], enh)
+            audiowrite(
+                os.path.join(self.vtest_outdir, fname),
+                enh.cpu().squeeze().numpy(),
+                16000,
+            )
 
+            if sph is None:
+                use_aecmos = True
+                continue
+
+            metric_dict = self.vtest_fn(sph[:, : enh.shape[-1]], enh)
             # record the loss
             metric_rec.update(item, metric_dict)
             # pbar.set_postfix(**metric_rec.state_dict())
+
+        if use_aecmos:
+            metric_dict = self.vtest_mos()
+            return metric_dict
 
         return metric_rec.state_dict()
 
@@ -285,6 +313,9 @@ def parse():
     parser.add_argument("--crn", help="crn aec model", action="store_true")
     parser.add_argument("--wo-sfp", help="without SFP path mode", action="store_true")
     parser.add_argument(
+        "--test", help="fusion with the atten method", action="store_true"
+    )
+    parser.add_argument(
         "--wfusion-plus", help="fusion with the atten method", action="store_true"
     )
     parser.add_argument(
@@ -297,7 +328,6 @@ def parse():
         "--wfusion-dilated", help="fusion with the atten method", action="store_true"
     )
     parser.add_argument("-T", "--train", help="train mode", action="store_true")
-    parser.add_argument("-P", "--predict", help="predict mode", action="store_true")
 
     parser.add_argument("--ckpt", help="ckpt path", type=str)
     parser.add_argument("--src", help="input directory", type=str)
@@ -406,9 +436,18 @@ if __name__ == "__main__":
             keymap=("mic", "ref", "sph"),
             align=True,
         ),
+        # AECTrunk(
+        #     cfg["dataset"]["vtest_dset"],
+        #     # flist="aec-test-set.csv",
+        #     flist="remove.csv",
+        #     patten="**/*mic.wav",
+        #     keymap=("mic", "lpb", "sph"),
+        #     align=True,
+        # ),
         AECTrunk(
             cfg["dataset"]["vtest_dset"],
-            flist="aec-test-set.csv",
+            # flist="aec-test-set.csv",
+            flist="icassp_blind_2021.csv",
             patten="**/*mic.wav",
             keymap=("mic", "lpb", "sph"),
             align=True,
@@ -419,4 +458,7 @@ if __name__ == "__main__":
         **init,
     )
     print(eng)
-    eng.fit()
+    if args.test:
+        eng.test(os.path.split(cfg["dataset"]["vtest_dset"])[-1], -2)
+    else:
+        eng.fit()

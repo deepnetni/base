@@ -1,3 +1,4 @@
+import json
 import os
 import random
 import re
@@ -8,6 +9,8 @@ from typing import Dict, Optional
 
 import matplotlib
 
+from utils.audiolib import audioread
+
 matplotlib.use("Agg")
 import numpy as np
 import torch
@@ -15,7 +18,6 @@ import torch.nn as nn
 from joblib import Parallel, delayed
 from matplotlib import pyplot as plt
 from torch.optim import Optimizer, lr_scheduler
-from torch.utils.data import Dataset
 from torch.utils.tensorboard.writer import SummaryWriter
 
 from utils.composite_metrics import eval_composite
@@ -57,6 +59,7 @@ class Engine(object):
         valid_per_epoch: int = 1,
         vtest_per_epoch: int = 0,
         valid_first: bool = False,
+        vtest_outdir: str = "vtest",
     ):
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self.name = name
@@ -67,6 +70,7 @@ class Engine(object):
         self.start_epoch = 1
         self.valid_per_epoch = valid_per_epoch
         self.vtest_per_epoch = vtest_per_epoch
+        self.vtest_outdir = vtest_outdir
         self.best_score = torch.finfo(torch.float32).min
         self.seed = seed
 
@@ -185,9 +189,12 @@ class Engine(object):
         np.random.seed(worker_id)
         random.seed(worker_id)
 
-    def _set_seed(self, seed: Optional[int] = None):
+    def _set_generator(self, seed: int = 0) -> torch.Generator:
         # make sure the dataloader return the same series under different PCs
-        torch.manual_seed(seed if seed is not None else self.seed)
+        # torch.manual_seed(seed if seed is not None else self.seed)
+        g = torch.Generator()
+        g.manual_seed(seed)
+        return g
 
     def _draw_spectrogram(self, epoch, *args, **kwargs):
         """
@@ -321,13 +328,24 @@ class Engine(object):
 
             if self.vtest_per_epoch != 0 and i % self.vtest_per_epoch == 0:
                 self.net.eval()
-                score = self._vtest_each_epoch(
-                    i
-                )  # {"-5":{"pesq":v,"stoi":v},"0":{...}}
+                # {"-5":{"pesq":v,"stoi":v},"0":{...}}
+                score = self._vtest_each_epoch(i)
                 out = ""
                 for k, v in score.items():
                     out += f"{k}:{v} " + "\n"
                 self.writer.add_text("Test", out, i)
+                self._print("Test", score, i)
+
+    def test(self, name: str, epoch: int = -1):
+        self.net.eval()
+        # {"-5":{"pesq":v,"stoi":v},"0":{...}}
+        score = self._vtest_each_epoch(epoch)
+        # out = ""
+        # for k, v in score.items():
+        #     out += f"{k}:{v} " + "\n"
+        # self.writer.add_text("Test", out, i)
+        self.writer.add_text(f"Test-{name}", json.dumps(score), epoch)
+        self._print(f"Test-{name}", score, epoch)
 
     def _net_flops(self) -> int:
         # from thop import profile

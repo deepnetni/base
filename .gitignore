@@ -4,3 +4,5 @@ trained/
 *DS_Store
 trained_AEC/
 *.csv
+*draw/
+vtest/

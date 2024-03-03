@@ -320,6 +320,10 @@ class AECTrunk(Dataset):
 
         self.logger.info(f"Get {dirname} {len(self.f_list)} files.")
 
+    @property
+    def dirname(self):
+        return str(self.dir)
+
     def _prepare(
         self, fname: Optional[str], patten: str, keymap: Tuple[str, str, str]
     ) -> List:

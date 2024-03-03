@@ -358,7 +358,7 @@ def resampler(input_dir, target_sr=16000, ext="*.wav"):
     """Resamples the audio files in input_dir to target_sr and save"""
     files = glob.glob(f"{input_dir}/" + ext)
     for pathname in files:
-        print(pathname)
+        print("resample", pathname)
         try:
             audio, fs = audioread(pathname)
             audio_resampled = librosa.core.resample(audio, fs, target_sr)
