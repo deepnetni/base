@@ -142,13 +142,18 @@ class NSTrunk(Dataset):
         seed: Optional[int] = None,
         norm: Optional[int] = None,
         return_abspath: bool = False,
-        csv_outdir: str = "csvs",
+        csv_dir: str = "csvs",
     ):
         super().__init__()
         self.dir = Path(dirname)
         self.logger = get_logger(dirname)
-        self.csv_outdir = csv_outdir
+        self.csv_dir = csv_dir
 
+        flist = (
+            os.path.join(csv_dir, os.path.split(dirname)[-1] + ".csv")
+            if flist is None
+            else flist
+        )
         self.f_list = self._prepare(flist, patten, keymap, clean_dirname)
         if seed is not None:
             random.seed(seed)
@@ -186,9 +191,9 @@ class NSTrunk(Dataset):
                     str(self.dir),
                     str(self.dir) if clean_dirname is None else clean_dirname,
                 ),
-                dirname=self.csv_outdir,
             )
         else:
+            self.logger.info(f"flist {fname} not exist, regenerating.")
             f_list = []
             f_mic_list = list(map(str, self.dir.glob(patten)))
             # if keymap is not None:
@@ -214,7 +219,6 @@ class NSTrunk(Dataset):
                     str(self.dir),
                     str(self.dir) if clean_dirname is None else clean_dirname,
                 ),
-                dirname=self.csv_outdir,
             ) if fname is not None else None
         return f_list
 
@@ -309,7 +313,7 @@ class AECTrunk(Dataset):
         norm: Optional[int] = None,
         return_abspath: bool = False,
         align: bool = False,
-        csv_outdir: str = "csvs",
+        csv_dir: str = "csvs",
         ne_flag=["NE"],
         dt_flag=["DT"],
         fe_flag=["FE"],
@@ -317,8 +321,13 @@ class AECTrunk(Dataset):
         super().__init__()
         self.dir = Path(dirname)
         self.logger = get_logger(dirname)
-        self.csv_outdir = csv_outdir
+        self.csv_dir = csv_dir
 
+        flist = (
+            os.path.join(csv_dir, os.path.split(dirname)[-1] + ".csv")
+            if flist is None
+            else flist
+        )
         self.f_list = self._prepare(flist, patten, keymap)
         if seed is not None:
             random.seed(seed)
@@ -351,9 +360,10 @@ class AECTrunk(Dataset):
         fname: file path of a file list
         """
         if fname is not None and os.path.exists(fname):
-            f_list = load_f_list(fname, str(self.dir), dirname=self.csv_outdir)
+            f_list = load_f_list(fname, str(self.dir))
             self.logger.info(f"Load flist {fname}")
         else:
+            self.logger.info(f"flist {fname} not exist, regenerating.")
             f_list = []
             f_mic_list = list(map(str, self.dir.glob(patten)))
             for f_mic in f_mic_list:
@@ -364,9 +374,7 @@ class AECTrunk(Dataset):
                 f_sph = os.path.join(dirp, f_sph)
                 f_list.append((f_mic, f_ref, f_sph))
 
-            save_f_list(
-                fname, f_list, str(self.dir), dirname=self.csv_outdir
-            ) if fname is not None else None
+            save_f_list(fname, f_list, str(self.dir)) if fname is not None else None
         return f_list
 
     def __len__(self):

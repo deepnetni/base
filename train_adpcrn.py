@@ -110,7 +110,7 @@ class Train(Engine):
             "sisnr": sisnr_lv.detach(),
             "mag": mse_mag.detach(),
             "pha": mse_pha.detach(),
-            # "pmsq": pmsq_score.detach(),
+            "pmsq": pmsq_score.detach(),
         }
 
         # pase loss
@@ -440,7 +440,7 @@ if __name__ == "__main__":
             dirname,
             # flist="aec-test-set.csv",
             # flist="icassp_blind_2021.csv",
-            flist=os.path.split(dirname)[-1] + ".csv",
+            # flist=os.path.split(dirname)[-1] + ".csv",
             patten="**/*mic.wav",
             keymap=("mic", "lpb", "sph"),
             align=True,
@@ -452,14 +452,14 @@ if __name__ == "__main__":
         AECTrunk(
             cfg["dataset"]["train_dset"],
             # flist="gene-aec-100-30.csv",
-            flist="gene-aec-train-test.csv",
+            # flist="gene-aec-train-test.csv",
             patten="**/*mic.wav",
             keymap=("mic", "ref", "sph"),
             align=True,
         ),
         AECTrunk(
             cfg["dataset"]["valid_dset"],
-            flist="gene-aec-4-1.csv",
+            # flist="gene-aec-4-1.csv",
             patten="**/*mic.wav",
             keymap=("mic", "ref", "sph"),
             align=True,
@@ -482,8 +482,8 @@ if __name__ == "__main__":
         #     align=True,
         # ),
         net=net,
-        batch_sz=4,
-        valid_first=True,
+        batch_sz=6,
+        valid_first=False,
         **init,
     )
     print(eng)
