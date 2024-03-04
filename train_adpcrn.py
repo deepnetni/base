@@ -11,7 +11,9 @@ from utils.ini_opts import read_ini
 from utils.trunk import AECTrunk
 from utils.record import REC, RECDepot
 from utils.losses import loss_compressed_mag, loss_sisnr, loss_pmsqe
-from utils.stft_loss import MultiResolutionSTFTLoss
+
+# from utils.stft_loss import MultiResolutionSTFTLoss
+from utils.conv_stft_loss import MultiResolutionSTFTLoss
 from tqdm import tqdm
 from typing import Dict, Optional, Union, List
 from models.APC_SNR.apc_snr import APC_SNR_multi_filter
@@ -72,7 +74,7 @@ class Train(Engine):
         self.ms_stft_loss = MultiResolutionSTFTLoss(
             fft_sizes=[960, 480, 240],
             hop_sizes=[480, 240, 120],
-            win_lengths=[960, 480, 240],
+            # win_lengths=[960, 480, 240],
         ).to(self.device)
         self.ms_stft_loss.eval()
 
@@ -107,11 +109,10 @@ class Train(Engine):
         # }
 
         # sisnr_lv = loss_sisnr(clean, enh)
-        # with torch.no_grad():
-        #     specs_enh = self.stft.transform(enh)
-        #     specs_sph = self.stft.transform(clean)
+        specs_enh = self.stft.transform(enh)
+        specs_sph = self.stft.transform(clean)
         # mse_mag, mse_pha = loss_compressed_mag(specs_sph, specs_enh)
-        # pmsq_score = loss_pmsqe(specs_sph, specs_enh)
+        pmsqe_score = loss_pmsqe(specs_sph, specs_enh)
         # loss = 0.05 * sisnr_lv + mse_pha + mse_mag + pmsq_score
         # return {
         #     "loss": loss,
@@ -122,11 +123,12 @@ class Train(Engine):
         # }
 
         sc_loss, mag_loss = self.ms_stft_loss(enh, clean)
-        loss = sc_loss + mag_loss
+        loss = sc_loss + mag_loss + 0.05 * pmsqe_score
         return {
             "loss": loss,
             "sc": sc_loss.detach(),
             "mag": mag_loss.detach(),
+            "pmsq": pmsqe_score.detach(),
         }
 
         # pase loss
