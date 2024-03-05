@@ -12,8 +12,9 @@ from utils.trunk import AECTrunk
 from utils.record import REC, RECDepot
 from utils.losses import loss_compressed_mag, loss_sisnr, loss_pmsqe
 
-# from utils.stft_loss import MultiResolutionSTFTLoss
-from utils.conv_stft_loss import MultiResolutionSTFTLoss
+from utils.stft_loss import MultiResolutionSTFTLoss
+
+# from utils.conv_stft_loss import MultiResolutionSTFTLoss
 from tqdm import tqdm
 from typing import Dict, Optional, Union, List
 from models.APC_SNR.apc_snr import APC_SNR_multi_filter
@@ -74,7 +75,7 @@ class Train(Engine):
         self.ms_stft_loss = MultiResolutionSTFTLoss(
             fft_sizes=[960, 480, 240],
             hop_sizes=[480, 240, 120],
-            # win_lengths=[960, 480, 240],
+            win_lengths=[960, 480, 240],
         ).to(self.device)
         self.ms_stft_loss.eval()
 
