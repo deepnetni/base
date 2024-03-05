@@ -5,5 +5,5 @@ trained/
 trained_AEC*/
 *.csv
 *draw/
-vtest/
+vtest*/
 csvs/
