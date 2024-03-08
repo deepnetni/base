@@ -28,6 +28,7 @@ from models.ADPCRN import (
     ADPCRN_MS,
 )
 from models.conv_stft import STFT
+from models.dpcrn_refinement import DPCRN_REFINEMENT
 
 # from models.pase.models.frontend import wf_builder
 import argparse
@@ -362,6 +363,9 @@ def parse():
     parser.add_argument(
         "--wfusion-dilated", help="fusion with the atten method", action="store_true"
     )
+    parser.add_argument(
+        "--wfusion-refine", help="fusion with the refine method", action="store_true"
+    )
     parser.add_argument("-T", "--train", help="train mode", action="store_true")
 
     parser.add_argument("--ckpt", help="ckpt path", type=str)
@@ -429,7 +433,18 @@ if __name__ == "__main__":
             stride=[2, 2, 1, 1],
             rnn_hidden_num=128,
         )
-    elif args.wfusion_dilated:  # 212
+    elif args.wfusion_refine:
+        cfg_fname = "config/config_adpcrn_refine.ini"
+        cfg = read_ini(cfg_fname)
+        net = DPCRN_REFINEMENT(
+            nframe=512,
+            nhop=256,
+            nfft=512,
+            cnn_num=[16, 32, 64, 128],
+            stride=[2, 2, 1, 1],
+            rnn_hidden_num=128,
+        )
+    elif args.wfusion_dilated:
         cfg_fname = "config/config_adpcrn_w_fusion_dilated.ini"
         cfg = read_ini(cfg_fname)
         net = ADPCRN_Dilated(

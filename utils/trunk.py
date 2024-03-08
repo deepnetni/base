@@ -347,7 +347,7 @@ class AECTrunk(Dataset):
         self.fe_flag = fe_flag
         self.tgt_fs = tgt_fs
 
-        self.logger.info(f"Get {dirname} {len(self.f_list)} files.")
+        self.logger.info(f"    Get {dirname} {len(self.f_list)} files.")
 
     @property
     def dirname(self):
@@ -363,7 +363,7 @@ class AECTrunk(Dataset):
             f_list = load_f_list(fname, str(self.dir))
             self.logger.info(f"Load flist {fname}")
         else:
-            self.logger.info(f"flist {fname} not exist, regenerating.")
+            self.logger.info(f"Regenerating flist {fname} not exist.")
             f_list = []
             f_mic_list = list(map(str, self.dir.glob(patten)))
             for f_mic in f_mic_list:

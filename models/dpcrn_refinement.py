@@ -52,7 +52,9 @@ class DPCRN_REFINEMENT(nn.Module):
         nbin = self.fft_dim
         nbinT = (self.fft_dim >> stride.count(2)) + 1
 
-        self.register_parameter("mask_w", nn.Parameter(torch.ones(len(cnn_num) + 1)))
+        self.register_parameter(
+            "mask_w", nn.Parameter(torch.ones(2 * (len(cnn_num) + 1), 1, 1))
+        )
 
         for idx in range(n_cnn_layer):
             # feat_num = (self.fft_dim >> idx + 1) + 1
@@ -114,7 +116,9 @@ class DPCRN_REFINEMENT(nn.Module):
                         stride=(1, 1),
                     ),
                     nn.Linear(
-                        in_features=nbinT * self.cnn_num[-1 - idx - 1] // 2,
+                        in_features=nbinT * self.cnn_num[-1 - idx - 1] // 2
+                        if idx != n_cnn_layer - 1
+                        else nbinT,
                         out_features=self.fft_dim,
                     ),
                     nn.Sigmoid(),
@@ -131,12 +135,16 @@ class DPCRN_REFINEMENT(nn.Module):
 
         self.rnn_dense_r = nn.Sequential(
             Rearrange("b c t f -> b 1 t (c f)"),
-            nn.Linear(in_features=nbin, out_features=self.fft_dim),
+            nn.Linear(
+                in_features=nbin * self.cnn_num[-1] // 2, out_features=self.fft_dim
+            ),
             nn.Sigmoid(),
         )
         self.rnn_dense_i = nn.Sequential(
             Rearrange("b c t f -> b 1 t (c f)"),
-            nn.Linear(in_features=nbin, out_features=self.fft_dim),
+            nn.Linear(
+                in_features=nbin * self.cnn_num[-1] // 2, out_features=self.fft_dim
+            ),
             nn.Sigmoid(),
         )
 
@@ -181,12 +189,12 @@ class DPCRN_REFINEMENT(nn.Module):
         x_i = self.rnns_i(x_i)
         mask_rnn_r = self.rnn_dense_r(x_r)
         mask_rnn_i = self.rnn_dense_r(x_i)
-        print(mask_rnn_i.shape)
-        mask_rnn = torch.concatenate([mask_rnn_r, mask_rnn_i], dim=1)
+
+        mask_rnn = torch.concat([mask_rnn_r, mask_rnn_i], dim=1)
 
         # mask_r, mask_i = F.tanh(mask_r), F.tanh(mask_i)
 
-        x = torch.concatenate([x_r, x_i], dim=1)
+        x = torch.concat([x_r, x_i], dim=1)
 
         # x = self.dilateds[2](x)
 
@@ -199,6 +207,12 @@ class DPCRN_REFINEMENT(nn.Module):
             x = complex_cat([x, spec_store[-idx - 1]], dim=1)
             x = layer(x)
             masks.append(self.refine[idx](x))
+
+        masks = torch.concat(masks, dim=1) * self.mask_w
+        masks_r, masks_i = masks.chunk(2, dim=1)
+        masks_r = masks_r.sum(dim=1, keepdim=True)
+        masks_i = masks_i.sum(dim=1, keepdim=True)
+        x = torch.concat([masks_r, masks_i], dim=1)
 
         feat_r, feat_i = complex_apply_mask(specs_mic, x)
         x = torch.concat([feat_r, feat_i], dim=1)
@@ -213,6 +227,8 @@ class DPCRN_REFINEMENT(nn.Module):
 
 
 if __name__ == "__main__":
+    from thop import profile
+
     net = DPCRN_REFINEMENT(
         nframe=512,
         nhop=256,
@@ -224,3 +240,5 @@ if __name__ == "__main__":
     inp = torch.randn(1, 16000)
     out = net(inp, inp)
     print(out.shape)
+    flops, num = profile(net, inputs=(inp, inp))
+    print(flops / 1e9, num / 1e6)
