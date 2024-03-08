@@ -72,10 +72,15 @@ class Train(Engine):
         self.stft = STFT(nframe=512, nhop=256).to(self.device)
         self.stft.eval()
 
+        # self.ms_stft_loss = MultiResolutionSTFTLoss(
+        #     fft_sizes=[960, 480, 240],
+        #     hop_sizes=[480, 240, 120],
+        #     win_lengths=[960, 480, 240],
+        # ).to(self.device)
         self.ms_stft_loss = MultiResolutionSTFTLoss(
-            fft_sizes=[960, 480, 240],
-            hop_sizes=[480, 240, 120],
-            win_lengths=[960, 480, 240],
+            fft_sizes=[1024, 512, 256],
+            hop_sizes=[512, 256, 128],
+            win_lengths=[1024, 512, 256],
         ).to(self.device)
         self.ms_stft_loss.eval()
 
@@ -110,10 +115,10 @@ class Train(Engine):
         # }
 
         # sisnr_lv = loss_sisnr(clean, enh)
-        specs_enh = self.stft.transform(enh)
-        specs_sph = self.stft.transform(clean)
+        # specs_enh = self.stft.transform(enh)
+        # specs_sph = self.stft.transform(clean)
         # mse_mag, mse_pha = loss_compressed_mag(specs_sph, specs_enh)
-        pmsqe_score = loss_pmsqe(specs_sph, specs_enh)
+        # pmsqe_score = loss_pmsqe(specs_sph, specs_enh)
         # loss = 0.05 * sisnr_lv + mse_pha + mse_mag + pmsq_score
         # return {
         #     "loss": loss,
@@ -124,12 +129,12 @@ class Train(Engine):
         # }
 
         sc_loss, mag_loss = self.ms_stft_loss(enh, clean)
-        loss = sc_loss + mag_loss + 0.05 * pmsqe_score
+        loss = sc_loss + mag_loss  # + 0.05 * pmsqe_score
         return {
             "loss": loss,
             "sc": sc_loss.detach(),
             "mag": mag_loss.detach(),
-            "pmsq": pmsqe_score.detach(),
+            # "pmsq": pmsqe_score.detach(),
         }
 
         # pase loss
