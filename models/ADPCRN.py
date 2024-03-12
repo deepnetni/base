@@ -448,6 +448,7 @@ class ADPCRN(nn.Module):
 
         specs_mic = self.stft.transform(mic)  # [B, 2, T, F]
         specs_ref = self.stft.transform(ref)
+        # print("##", specs_ref.shape)
 
         specs_mic_real, specs_mic_imag = specs_mic.chunk(2, dim=1)  # B,1,T,F
         specs_ref_real, specs_ref_imag = specs_ref.chunk(2, dim=1)
@@ -466,6 +467,7 @@ class ADPCRN(nn.Module):
             spec = lm(spec)
             x = lr(x)  # x shape [B, C, T, F]
             spec_store.append(spec)
+            # spec_store.append(x)
             # mx = complex_cat([spec, x], dim=1)
             # spec_store.append(mx)
 
@@ -1603,6 +1605,8 @@ class ADPCRN_Dilated(nn.Module):
 
 
 if __name__ == "__main__":
+    import time
+
     net = ADPCRN(
         nframe=512,
         nhop=256,
@@ -1612,8 +1616,12 @@ if __name__ == "__main__":
         rnn_hidden_num=128,
     )
     inp = torch.randn(1, 16000)
+    net = net.cpu()
+    st = time.time()
     out = net(inp, inp)
+    ed = time.time()
     print(out.shape)
+    print(1000 * round(ed - st, 10) / 63)  # ms
     # torch.save(net.state_dict(), "31.pth")
 
     net = DPCRN_AEC(

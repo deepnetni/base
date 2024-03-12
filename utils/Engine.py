@@ -130,11 +130,9 @@ class Engine(object):
         enh: Union[torch.Tensor, np.ndarray],
         zero_mean: bool = True,
     ) -> np.ndarray:
-        if isinstance(sph, np.ndarray):
-            # sph = sph.cpu().detach().numpy()
-            # enh = enh.cpu().detach().numpy()
-            sph = torch.from_numpy(sph)
-            enh = torch.from_numpy(enh)
+        # if isinstance(sph, np.ndarray) or isinstance(enh, np.ndarray):
+        #     sph = torch.from_numpy(sph)
+        #     enh = torch.from_numpy(enh)
 
         return compute_si_snr(sph, enh, zero_mean).cpu().detach().numpy()
 

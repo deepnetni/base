@@ -12,10 +12,20 @@ def l2_norm(s, keepdim=False):
     return torch.linalg.norm(s, dim=-1, keepdim=keepdim)
 
 
-def compute_si_snr(sph, est, zero_mean=True):
+def compute_si_snr(
+    sph: Union[torch.Tensor, np.ndarray],
+    est: Union[torch.Tensor, np.ndarray],
+    zero_mean=True,
+):
     """
     s1 is the est signal, s2 represent for clean speech
     """
+    is_numpy = False
+    if isinstance(sph, np.ndarray) or isinstance(est, np.ndarray):
+        sph = torch.from_numpy(sph)
+        est = torch.from_numpy(est)
+        is_numpy = True
+
     eps = torch.finfo(sph.dtype).eps
 
     if zero_mean is True:
@@ -38,7 +48,7 @@ def compute_si_snr(sph, est, zero_mean=True):
         (torch.sum(s_target**2, dim=-1) + eps)
         / (torch.sum(e_noise**2, dim=-1) + eps)
     )
-    return sisnr
+    return sisnr.cpu().detach().numpy() if is_numpy else sisnr
 
 
 def compute_erle(mic, est):
@@ -68,7 +78,7 @@ def compute_pesq(lbl, est, fs=16000, norm=False):
     if norm:
         score = (score - 1.0) / 3.5
 
-    return score
+    return score  # scaler
 
 
 def compute_stoi(lbl, est, fs=16000):
@@ -78,4 +88,4 @@ def compute_stoi(lbl, est, fs=16000):
         score = 0
         print(e)
 
-    return score
+    return score  # scaler

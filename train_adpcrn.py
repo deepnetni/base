@@ -66,6 +66,8 @@ class Train(Engine):
             # generator=g,
         )
 
+        self.vtest_loader: List
+
         self.vtest_loader = (
             [vtest_dset] if isinstance(vtest_dset, Dataset) else vtest_dset
         )
