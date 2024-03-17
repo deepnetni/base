@@ -210,9 +210,9 @@ class Engine(object):
         for xk, axi, title in zip(args, ax.flat, titles):
             xk = xk.cpu().detach().numpy() if isinstance(xk, torch.Tensor) else xk
 
-            if xk.ndim > 2:
+            if xk.ndim > 3:  # B,C,T,F
                 r, i = xk[0, 0, ...], xk[0, 1, ...]  # r, i shape t,f
-            else:
+            else:  # C,T,F
                 r, i = xk[0, ...], xk[1, ...]
 
             mag = (r**2 + i**2) ** 0.5

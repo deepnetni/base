@@ -558,10 +558,10 @@ class CHiMe3(Dataset):
     def __init__(
         self,
         dirname,
+        subdir: str = "train",
         nlen: float = 0.0,
         min_len: float = 0.0,
         fs: int = 16000,
-        subdir: str = "train",
         flist: Optional[str] = None,
         csv_dir: str = "csvs",
         seed: Optional[int] = None,
@@ -583,7 +583,7 @@ class CHiMe3(Dataset):
         else:
             raise RuntimeError(f"{subdir} not supported.")
 
-        self.logger = get_logger(dirname)
+        self.logger = get_logger(f"{dirname}-{subdir}")
         self.csv_dir = csv_dir
         self.N = int(nlen * fs)
         self.minN = int(min_len * fs)
@@ -628,7 +628,7 @@ class CHiMe3(Dataset):
                         {"f": f, "start": st, "end": nlen, "pad": self.N - (nlen - st)}
                     )
             else:
-                f_list.append({"f": f, "start": 0, "end": nlen, "pad": 0})
+                f_list.append({"f": f, "start": 0, "end": int(nlen), "pad": 0})
 
         return f_list
 

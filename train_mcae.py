@@ -28,7 +28,7 @@ class Train(Engine):
         self,
         train_dset: Dataset,
         valid_dset: Dataset,
-        vtest_dset: Union[List[Dataset], Dataset],
+        vtest_dset: Dataset,
         batch_sz: int,
         **kwargs,
     ):
@@ -46,7 +46,8 @@ class Train(Engine):
         # g.manual_seed(0)
         self.valid_loader = DataLoader(
             valid_dset,
-            batch_size=1,
+            batch_size=batch_sz,
+            # batch_size=1,
             num_workers=6,
             pin_memory=True,
             shuffle=True,
@@ -56,17 +57,30 @@ class Train(Engine):
             # generator=g,
         )
 
-        self.vtest_loader = (
-            [vtest_dset] if isinstance(vtest_dset, Dataset) else vtest_dset
+        self.vtest_loader = DataLoader(
+            vtest_dset,
+            batch_size=batch_sz,
+            # batch_size=1,
+            num_workers=6,
+            pin_memory=True,
+            shuffle=True,
+            worker_init_fn=self._worker_set_seed,
+            generator=self._set_generator(),
+            collate_fn=pad_to_longest,
+            # generator=g,
         )
+
+        # self.vtest_loader = (
+        #     [vtest_dset] if isinstance(vtest_dset, Dataset) else vtest_dset
+        # )
 
         self.stft = STFT(nframe=512, nhop=256).to(self.device)
         self.stft.eval()
 
         self.ms_stft_loss = MultiResolutionSTFTLoss(
-            fft_sizes=[960, 480, 240],
-            hop_sizes=[480, 240, 120],
-            win_lengths=[960, 480, 240],
+            fft_sizes=[1024, 512, 256],
+            hop_sizes=[512, 256, 128],
+            win_lengths=[1024, 512, 256],
         ).to(self.device)
         self.ms_stft_loss.eval()
 
@@ -88,15 +102,9 @@ class Train(Engine):
         #     "pmsqe": loss_pmsqe.detach(),
         #     "apc_snr": loss_APC_SNR.detach(),
         # }
-
         # sisnr_lv = loss_sisnr(clean, enh)
-        if nlen is None:
-            clean = rearrange(clean, "b t m-> (b m) t")
-            enh = rearrange(enh, "b t m-> (b m) t")
-            sc_loss, mag_loss = self.ms_stft_loss(enh, clean)
-            loss = sc_loss + mag_loss  # + 0.05 * pmsqe_score
-        # specs_enh = self.stft.transform(enh[..., i])
-        # specs_sph = self.stft.transform(clean[..., i])
+        # specs_enh = self.stft.transform(enh)
+        # specs_sph = self.stft.transform(clean)
         # mse_mag, mse_pha = loss_compressed_mag(specs_sph, specs_enh)
         # pmsqe_score = loss_pmsqe(specs_sph, specs_enh)
         # loss = 0.05 * sisnr_lv + mse_pha + mse_mag + pmsq_score
@@ -107,12 +115,17 @@ class Train(Engine):
         #     "pha": mse_pha.detach(),
         #     "pmsq": pmsq_score.detach(),
         # }
+
+        if nlen is None:
+            clean = rearrange(clean, "b t m-> (b m) t")
+            enh = rearrange(enh, "b t m-> (b m) t")
+            sc_loss, mag_loss = self.ms_stft_loss(enh, clean)
+            loss = sc_loss + mag_loss  # + 0.05 * pmsqe_score
         else:
             cln_ = clean[0, : nlen[0], ...].permute(1, 0)  # M,T
             enh_ = enh[0, : nlen[0], ...].permute(1, 0)
             sc_loss, mag_loss = self.ms_stft_loss(enh_, cln_)
-            for idx, n in enumerate(nlen[1:]):
-                idx += 1
+            for idx, n in enumerate(nlen[1:], start=1):
                 cln_ = clean[idx, :n, ...].permute(1, 0)  # M,T
                 enh_ = enh[idx, :n, ...].permute(1, 0)
                 sc_, mag_ = self.ms_stft_loss(enh_, cln_)
@@ -208,20 +221,18 @@ class Train(Engine):
             mic = mic.to(self.device)  # B,T,6
             # sph = sph.to(self.device)  # b,c,t,f
             nlen = nlen.to(self.device)  # B
+            nlen = self.stft.nLen(nlen)
 
             with torch.no_grad():
-                enh, lbl, _, mu, logvar = self.net(mic)
+                enh, lbl, _, mu, logvar = self.net(mic)  # B,T,M
 
             metric_dict = self.valid_fn(lbl, enh, mu, logvar, nlen)
 
             if draw is True:
                 with torch.no_grad():
-                    mxk = self.stft.transform(mic)
-                    exk = self.stft.transform(enh)
-                    sxk = self.stft.transform(sph)
-                self._draw_spectrogram(
-                    epoch, mxk, exk, sxk, titles=("mic", "enh", "sph")
-                )
+                    exk = self.stft.transform(enh[..., 0])
+                    sxk = self.stft.transform(lbl[..., 0])
+                self._draw_spectrogram(epoch, exk, sxk, titles=("enh-c0", "sph-c0"))
                 draw = False
 
             # record the loss
@@ -266,51 +277,52 @@ class Train(Engine):
     def _vtest_each_epoch(self, epoch):
         vtest_metric = {}
 
-        for vtest_loader in self.vtest_loader:
-            metric_rec = RECDepot()
-            use_aecmos = False
+        metric_rec = RECDepot()
+        use_aecmos = False
+        vtest_loader = self.vtest_loader
 
-            dirname = os.path.split(vtest_loader.dirname)[-1]
-            pbar = tqdm(
-                vtest_loader,
-                total=len(vtest_loader),
-                ncols=120,
-                leave=False,
-                desc=f"vTest-{epoch}/{dirname}",
+        dirname = os.path.split(vtest_loader.dirname)[-1]
+        pbar = tqdm(
+            vtest_loader,
+            total=len(vtest_loader),
+            ncols=120,
+            leave=False,
+            desc=f"vTest-{epoch}/{dirname}",
+        )
+        vtest_outdir = os.path.join(self.vtest_outdir, dirname)
+        shutil.rmtree(vtest_outdir) if os.path.exists(vtest_outdir) else None
+
+        for mic, sph, nlen in pbar:
+            mic = mic.to(self.device)  # b,c,t,f
+            # sph = sph.to(self.device)  # b,c,t,f
+            nlen = nlen.to(self.device)  # B
+            nlen = self.stft.nLen(nlen)
+
+            item = os.path.split(os.path.dirname(fname))[-1]
+
+            with torch.no_grad():
+                enh = self.net(mic, ref)
+
+            audiowrite(
+                os.path.join(self.vtest_outdir, fname),
+                enh.cpu().squeeze().numpy(),
+                16000,
             )
-            vtest_outdir = os.path.join(self.vtest_outdir, dirname)
-            shutil.rmtree(vtest_outdir) if os.path.exists(vtest_outdir) else None
 
-            for mic, ref, sph, fname in pbar:
-                mic = mic.to(self.device)  # b,c,t,f
-                ref = ref.to(self.device)  # b,c,t,f
-                sph = sph.to(self.device) if sph is not None else None  # b,c,t,f
+            if sph is None:
+                use_aecmos = True
+                continue
 
-                item = os.path.split(os.path.dirname(fname))[-1]
+            metric_dict = self.vtest_fn(sph[:, : enh.shape[-1]], enh)
+            # record the loss
+            metric_rec.update(item, metric_dict)
+            # pbar.set_postfix(**metric_rec.state_dict())
 
-                with torch.no_grad():
-                    enh = self.net(mic, ref)
-
-                audiowrite(
-                    os.path.join(self.vtest_outdir, fname),
-                    enh.cpu().squeeze().numpy(),
-                    16000,
-                )
-
-                if sph is None:
-                    use_aecmos = True
-                    continue
-
-                metric_dict = self.vtest_fn(sph[:, : enh.shape[-1]], enh)
-                # record the loss
-                metric_rec.update(item, metric_dict)
-                # pbar.set_postfix(**metric_rec.state_dict())
-
-            if use_aecmos:
-                metric_dict = self.vtest_aecmos(vtest_loader.dirname, vtest_outdir)
-                vtest_metric[dirname] = metric_dict
-            else:
-                vtest_metric[dirname] = metric_rec.state_dict()
+        if use_aecmos:
+            metric_dict = self.vtest_aecmos(vtest_loader.dirname, vtest_outdir)
+            vtest_metric[dirname] = metric_dict
+        else:
+            vtest_metric[dirname] = metric_rec.state_dict()
 
         return vtest_metric
 
@@ -346,9 +358,9 @@ def parse():
 if __name__ == "__main__":
     args = parse()
 
-    cfg_fname = "config/config_mcse.ini"
+    cfg_fname = "config/config_mcae.ini"
     cfg = read_ini(cfg_fname)
-    net = MCAE(512, 256, 512, 6, 128)
+    net = MCAE(nframe=512, nhop=256, nfft=512, in_channels=6, latent_dim=128)
 
     print("##", cfg_fname)
 
@@ -360,7 +372,7 @@ if __name__ == "__main__":
         cfg["dataset"]["train_dset"], subdir="train", nlen=5.0, min_len=1.0
     )
     valid_dset = CHiMe3(cfg["dataset"]["valid_dset"], subdir="dev")
-    test_dsets = [CHiMe3(cfg["dataset"]["vtest_dset"], subdir="test")]
+    test_dsets = CHiMe3(cfg["dataset"]["vtest_dset"], subdir="test")
 
     init = cfg["config"]
     eng = Train(
@@ -368,7 +380,7 @@ if __name__ == "__main__":
         valid_dset,
         test_dsets,
         net=net,
-        batch_sz=6,
+        batch_sz=10,
         valid_first=False,
         **init,
     )
