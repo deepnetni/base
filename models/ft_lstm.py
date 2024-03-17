@@ -152,3 +152,77 @@ class FTLSTM_RESNET(nn.Module):
         inp = inp + x
 
         return inp
+
+
+class FTLSTM_RESNET_ATT(nn.Module):
+    def __init__(self, input_size, hidden_size, batch_first=True, atten_wlen=10):
+        """
+        Args:
+            input_size: should be equal to C of input shape B,C,T,F
+        """
+        super().__init__()
+        self.att_wlen = atten_wlen
+
+        self.f_att = nn.MultiheadAttention(
+            embed_dim=input_size, num_heads=2, batch_first=True
+        )
+
+        self.f_unit = nn.LSTM(
+            input_size=input_size,
+            hidden_size=hidden_size // 2,
+            batch_first=batch_first,
+            bidirectional=True,
+        )
+
+        self.f_post = nn.Sequential(
+            nn.Linear(hidden_size, input_size),
+            nn.LayerNorm(input_size),
+        )
+
+        self.t_att = nn.MultiheadAttention(
+            embed_dim=input_size, num_heads=2, batch_first=True
+        )
+
+        self.t_unit = nn.LSTM(
+            input_size=input_size,
+            hidden_size=hidden_size,
+            batch_first=batch_first,
+        )
+
+        self.t_post = nn.Sequential(
+            nn.Linear(hidden_size, input_size),
+            nn.LayerNorm(input_size),
+        )
+
+    def forward(self, inp: torch.Tensor):
+        """
+        Args:
+            x: input shape should be B,C,T,F
+        """
+        nB, nC, nF, nT = inp.shape
+        x = einops.rearrange(inp, "b c t f -> (b t) f c")
+
+        xf, _ = self.f_att(x, x, x)
+        x = x + xf
+        x, _ = self.f_unit(x)  # BxT,F,C
+        x = self.f_post(x)
+        x = einops.rearrange(x, "(b t) f c -> b c t f", b=nB)
+        inp = inp + x
+        x = einops.rearrange(inp, "b c t f -> (b f) t c")
+
+        # tmask
+        nT = x.shape[1]
+        mask_1 = torch.ones(nT, nT, device=x.device).triu_(1).bool()  # TxT
+        mask_2 = torch.ones(nT, nT, device=x.device).tril_(-self.att_wlen).bool()  # TxT
+        mask = mask_1 + mask_2
+
+        xt, w = self.t_att(x, x, x, attn_mask=mask)
+        # print(w.shape, mask, mask.shape)
+        # print(xt[..., 0, :], xt.shape)
+        x = x + xt
+        x, _ = self.t_unit(x)
+        x = self.t_post(x)
+        x = einops.rearrange(x, "(b f) t c -> b c t f", b=nB)
+        x += inp
+
+        return x

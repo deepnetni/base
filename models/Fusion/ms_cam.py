@@ -4,6 +4,41 @@ import torch
 import torch.nn as nn
 
 
+class InstanceNorm(nn.Module):
+    """Normalization along the last two dimensions, and the output shape is equal to that of the input.
+    Input: B,C,T,F
+
+    Args:
+        feats: CxF with input B,C,T,F
+    """
+
+    def __init__(self, feats=1):
+        super().__init__()
+        self.eps = torch.finfo(torch.float32).eps
+        self.gamma = nn.Parameter(torch.ones(feats), requires_grad=True)
+        self.beta = nn.Parameter(torch.ones(feats), requires_grad=True)
+
+    def forward(self, inputs: Tensor):
+        """
+        inputs shape is (B, C, T, F)
+        """
+        nB, nC, nT, nF = inputs.shape
+        inputs = inputs.permute(0, 2, 1, 3).flatten(-2)  # B, T, CxF
+
+        mean = torch.mean(inputs, dim=-1, keepdim=True)
+        var = torch.mean(torch.square(inputs - mean), dim=-1, keepdim=True)
+
+        std = torch.sqrt(var + self.eps)
+
+        outputs = (inputs - mean) / std
+        outputs = outputs * self.gamma + self.beta
+
+        outputs = outputs.reshape(nB, nT, nC, nF)
+        outputs = outputs.permute(0, 2, 1, 3)  # B,C,T,F
+
+        return outputs
+
+
 class MS_CAM_F(nn.Module):
     """
     input: B,C,T,F
@@ -65,6 +100,16 @@ class MS_CAM_F(nn.Module):
             ),
             Rearrange("b f t c->b c t f"),
         )
+
+        # self.post = nn.Sequential(
+        #     nn.Conv2d(
+        #         inp_channels=feature_size,
+        #         out_channels=feature_size,
+        #         kernel_size=1,
+        #         stride=1,
+        #         padding=0,
+        #     ),
+        # )
 
     def forward(self, x: torch.Tensor, y: torch.Tensor):
         x_ = x + y

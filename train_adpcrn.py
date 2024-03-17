@@ -522,7 +522,7 @@ if __name__ == "__main__":
         #     align=True,
         # ),
         net=net,
-        batch_sz=6,
+        batch_sz=4,
         valid_first=False,
         **init,
     )

@@ -19,7 +19,7 @@ from models.complexnn import (
     ComplexConv1d,
 )
 from models.conv_stft import STFT
-from models.ft_lstm import FTLSTM_RESNET
+from models.ft_lstm import FTLSTM_RESNET, FTLSTM_RESNET_ATT
 from models.CMGAN.generator import DilatedDenseNet
 from models.Fusion.ms_cam import AFF, MS_CAM, MS_SELF_CAM, MS_CAM_F
 
@@ -1288,25 +1288,15 @@ class ADPCRN_ATTN(nn.Module):
             inp_channels=self.cnn_num[-1], feature_size=nbin, r=1
         )
 
-        self.attn = FTAttention(cnn_num[-1], 10)
+        # self.attn = FTAttention(cnn_num[-1], 10)
 
         self.rnns_r = nn.Sequential(
-            FTLSTM_RESNET(cnn_num[-1] // 2, rnn_hidden_num),
-            FTLSTM_RESNET(cnn_num[-1] // 2, rnn_hidden_num),
-            # Rearrange("b c f t -> b t f c"),
-            # nn.Linear(in_features=cnn_num[-1], out_features=cnn_num[-1] // 2),
-            # Rearrange("b t f c -> b c f t"),
-            # InstanceNorm(cnn_num[-1] // 2 * nbin),
-            # nn.PReLU(),
+            FTLSTM_RESNET_ATT(cnn_num[-1] // 2, rnn_hidden_num),
+            FTLSTM_RESNET_ATT(cnn_num[-1] // 2, rnn_hidden_num),
         )
         self.rnns_i = nn.Sequential(
-            FTLSTM_RESNET(cnn_num[-1] // 2, rnn_hidden_num),
-            FTLSTM_RESNET(cnn_num[-1] // 2, rnn_hidden_num),
-            # Rearrange("b c f t -> b t f c"),
-            # nn.Linear(in_features=cnn_num[-1], out_features=cnn_num[-1] // 2),
-            # Rearrange("b t f c -> b c f t"),
-            # InstanceNorm(cnn_num[-1] // 2 * nbin),
-            # nn.PReLU(),
+            FTLSTM_RESNET_ATT(cnn_num[-1] // 2, rnn_hidden_num),
+            FTLSTM_RESNET_ATT(cnn_num[-1] // 2, rnn_hidden_num),
         )
 
         # self.dilateds = nn.ModuleList()
@@ -1357,7 +1347,7 @@ class ADPCRN_ATTN(nn.Module):
         # x = complex_cat([spec, x], dim=1)
         # x = self.encoder_fusion(x)
         x = self.encoder_fusion(x, spec)
-        x = self.attn(x, x, x)
+        # x = self.attn(x, x, x)
         # x = x + spec
         x_r, x_i = torch.chunk(x, 2, dim=1)
 

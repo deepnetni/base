@@ -19,7 +19,7 @@ class InstanceNorm(nn.Module):
         super().__init__()
         self.eps = torch.finfo(torch.float32).eps
         self.gamma = nn.Parameter(torch.ones(feats), requires_grad=True)
-        self.beta = nn.Parameter(torch.ones(feats), requires_grad=True)
+        self.beta = nn.Parameter(torch.zeros(feats), requires_grad=True)
 
     def forward(self, inputs: Tensor):
         """

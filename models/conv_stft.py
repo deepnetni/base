@@ -171,8 +171,8 @@ def verify_w_librosa():
 def verify_self():
     from matplotlib import pyplot as plt
 
-    inp = torch.randn(1, 10000)
-    net = STFT(480, 160, "hann", center=False)
+    inp = torch.randn(1, 16000)
+    net = STFT(512, 256, "hann", center=True)
     xk = net.transform(inp)
     print(xk.shape)
     out = net.inverse(xk)
