@@ -133,13 +133,13 @@ def verify_w_librosa():
     nhop = 160
     nfft = 512
 
-    inp = torch.randn(1, 16000)
+    inp = torch.randn(1, 10000)
     net = STFT(nframe, nhop, "hann", nfft=nfft)
     xk = net.transform(inp)
     print("xk", xk.shape)
     out = net.inverse(xk)
     print("xk_", out.shape)
-    print(torch.sum((inp - out) ** 2))
+    # print(torch.sum((inp - out) ** 2))
 
     np_inputs = inp.numpy().reshape(-1)
     librosa_stft = librosa.stft(  # B,F,T
@@ -150,6 +150,7 @@ def verify_w_librosa():
         window="hann",
         center=True,
     )
+    print(f"libros:{librosa_stft.shape}, {xk.shape}")
 
     librosa_istft = librosa.istft(
         librosa_stft,
@@ -159,6 +160,7 @@ def verify_w_librosa():
         window="hann",
         center=True,
     )
+    print(f"ilibrosa:{librosa_istft.shape}")
 
     librosa_stft = librosa_stft[None, ...]  # b,f,t
     xkk = np.stack([librosa_stft.real, librosa_stft.imag], axis=1)
@@ -191,5 +193,5 @@ def verify_self():
 
 
 if __name__ == "__main__":
-    verify_self()
-    # verify_w_librosa()
+    # verify_self()
+    verify_w_librosa()

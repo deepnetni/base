@@ -160,7 +160,7 @@ def align_ref_to_mic(
 
 
 def audioread(
-    path, sub_mean=False, start=0, stop=None, target_level: Optional[int] = None
+    path, sub_mean=True, start=0, stop=None, target_level: Optional[int] = None
 ):
     """Function to read audio
     Args:

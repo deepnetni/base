@@ -119,7 +119,7 @@ class SPConvTranspose2d(nn.Module):
         out = self.conv(x)
         batch_size, nchannels, H, W = out.shape
         out = out.view((batch_size, self.r, nchannels // self.r, H, W))
-        out = out.permute(0, 2, 3, 4, 1)
+        out = out.permute(0, 2, 3, 4, 1)  # b,nc/r,h,w,r
         out = out.contiguous().view((batch_size, nchannels // self.r, H, -1))
         return out
 

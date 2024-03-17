@@ -1,5 +1,6 @@
 import csv
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -13,11 +14,15 @@ from typing import List, Optional, Tuple, Union
 
 import numpy as np
 import torch
-from torch.utils.data import Dataset
+import torch.nn as nn
+from torch.utils.data import Dataset, DataLoader
+from torch.nn.utils.rnn import pad_packed_sequence, pad_sequence, pack_padded_sequence
 
 from utils.audiolib import audioread
 from utils.gcc_phat import gcc_phat
 from utils.logger import get_logger
+from models.conv_stft import STFT
+from tqdm import tqdm
 
 
 def load_f_list(
@@ -52,15 +57,13 @@ def save_f_list(
     fname: str,
     f_list: List,
     relative: Union[str, Tuple[str, ...], None] = None,
-    dirname: Optional[str] = None,
 ):
     """
     fname: csv file contains the training files path with format [(f1, f2..), (f1, f2)]
     relative: str or tuple of str each corresponding to element in f_list
     """
-    if dirname is not None:
-        os.makedirs(dirname) if not os.path.exists(dirname) else None
-        fname = os.path.join(dirname, fname)
+    dirname = os.path.dirname(fname)
+    os.makedirs(dirname) if not os.path.exists(dirname) else None
 
     with open(fname, "w+") as fp:
         writer = csv.writer(fp)
@@ -74,6 +77,77 @@ def save_f_list(
                     f
                     if relative is None
                     else tuple(map(lambda x: os.path.relpath(x, relative), f))
+                )
+
+
+def load_f_list_len(
+    fname: str,
+    relative: Union[str, Tuple[str, ...], None] = None,
+    dirname: Optional[str] = None,
+) -> List:
+    """
+    relative: str or tuple of str each corresponding to element in the file.
+    return: [(f1, f2..), (...)]
+    """
+    f_list = []
+    fname = os.path.join(dirname, fname) if dirname is not None else fname
+    with open(fname, "r+") as fp:
+        ctx = csv.reader(fp)
+        for element in ctx:
+            element, num = element[:-1], element[-1]
+            if isinstance(relative, tuple):
+                f_list.append(
+                    tuple(
+                        (
+                            list(
+                                map(lambda x, y: os.path.join(x, y), relative, element)
+                            ),
+                            num,
+                        )  # ([...], num)
+                    )
+                )
+
+            else:
+                f_list.append(
+                    element
+                    if relative is None
+                    else tuple(
+                        (list(map(lambda x: os.path.join(relative, x), element)), num)
+                    )
+                )
+
+    return f_list
+
+
+def save_f_list_len(
+    fname: str,
+    f_list: List,
+    relative: Union[str, Tuple[str, ...], None] = None,
+):
+    """
+    fname: csv file contains the training files path with format [(f1, f2..), (f1, f2)]
+    relative: str or tuple of str each corresponding to element in f_list
+    """
+    dirname = os.path.dirname(fname)
+    os.makedirs(dirname) if not os.path.exists(dirname) else None
+
+    with open(fname, "w+") as fp:
+        writer = csv.writer(fp)
+        for f, num in f_list:
+            if isinstance(relative, tuple):
+                writer.writerow(
+                    tuple(
+                        list(map(lambda x, y: os.path.relpath(x, y), f, relative))
+                        + [num]
+                    )
+                )
+            else:
+                writer.writerow(
+                    f
+                    if relative is None
+                    else tuple(
+                        list(map(lambda x: os.path.relpath(x, relative), f)) + [num]
+                    )
                 )
 
 
@@ -476,6 +550,236 @@ class AECTrunk(Dataset):
         )
 
 
+class CHiMe3(Dataset):
+    """
+    subdir: train, test, dev
+    """
+
+    def __init__(
+        self,
+        dirname,
+        nlen: float = 0.0,
+        min_len: float = 0.0,
+        fs: int = 16000,
+        subdir: str = "train",
+        flist: Optional[str] = None,
+        csv_dir: str = "csvs",
+        seed: Optional[int] = None,
+        norm: Optional[int] = None,
+        return_abspath: bool = False,
+    ) -> None:
+        super().__init__()
+        self.dir = Path(dirname) / "data" / "audio" / "16kHz" / "isolated" / subdir
+
+        if subdir == "train":
+            self.clean_dir = self.dir / "tr05_org"
+            self.pattern = ("(CAF|PED|STR|BUS).CH1.wav", "ORG.wav")
+        elif subdir == "test":
+            self.clean_dir = self.dir / "et05_CH0"
+            self.pattern = ("(CAF|PED|STR|BUS).CH1.wav", "BTH.CH0.wav")
+        elif subdir == "dev":
+            self.clean_dir = self.dir / "dt05_CH0"
+            self.pattern = ("(CAF|PED|STR|BUS).CH1.wav", "BTH.CH0.wav")
+        else:
+            raise RuntimeError(f"{subdir} not supported.")
+
+        self.logger = get_logger(dirname)
+        self.csv_dir = csv_dir
+        self.N = int(nlen * fs)
+        self.minN = int(min_len * fs)
+
+        flist = (
+            os.path.join(csv_dir, os.path.split(dirname)[-1] + f"-{subdir}.csv")
+            if flist is None
+            else flist
+        )
+
+        self.f_list = self._prepare(flist)
+
+        if seed is not None:
+            random.seed(seed)
+            random.shuffle(self.f_list)
+
+        self.norm = norm
+        self.return_abspath = return_abspath
+
+        self.logger.info(f"dirname {str(self.dir)} {len(self.f_list)} files.")
+
+    @property
+    def dirname(self):
+        return str(self.dir)
+
+    def _rearange(self, flist):
+        f_list = []
+
+        for f, nlen in flist:
+            if self.N != 0 and self.minN != 0:
+                st = 0
+                nlen = int(nlen)
+                if nlen < self.minN:
+                    continue
+
+                while nlen - st >= self.N:
+                    f_list.append({"f": f, "start": st, "end": st + self.N, "pad": 0})
+                    st += self.N
+
+                if nlen - st >= self.minN:
+                    f_list.append(
+                        {"f": f, "start": st, "end": nlen, "pad": self.N - (nlen - st)}
+                    )
+            else:
+                f_list.append({"f": f, "start": 0, "end": nlen, "pad": 0})
+
+        return f_list
+
+    def _sort(self, flist: List) -> List:
+        l = []
+        for f in tqdm(flist, ncols=80, leave=False):
+            d, _ = audioread(f[0], sub_mean=True)
+            l.append(len(d))
+
+        tmp = zip(flist, l)
+        flist = sorted(tmp, key=lambda x: x[-1], reverse=True)
+        # flist, l = zip(*tmp)
+        return flist
+
+    def _prepare(self, fname: Optional[str]) -> List:
+        """
+        fname: file path of a file list
+        """
+
+        if fname is not None and os.path.exists(fname):
+            self.logger.info(f"Load flist {fname}")
+            f_list = load_f_list_len(fname, str(self.dir))
+        else:
+            self.logger.info(f"Regenerating flist {fname}.")
+            f_list = []
+
+            for f in self.dir.iterdir():
+                if not f.is_dir() or not f.match("*simu"):
+                    continue
+
+                # searching simu directory
+                ch1 = list(map(str, f.rglob("*CH1.wav")))
+                f_list += [
+                    (
+                        x,
+                        x.replace("CH1.wav", "CH2.wav"),
+                        x.replace("CH1.wav", "CH3.wav"),
+                        x.replace("CH1.wav", "CH4.wav"),
+                        x.replace("CH1.wav", "CH5.wav"),
+                        x.replace("CH1.wav", "CH6.wav"),
+                        re.sub(
+                            *self.pattern,
+                            os.path.join(str(self.clean_dir), os.path.split(x)[-1]),
+                        ),
+                    )
+                    for x in ch1
+                ]
+
+            f_list = self._sort(f_list)
+
+            save_f_list_len(fname, f_list, str(self.dir)) if fname is not None else None
+
+        return self._rearange(f_list)
+
+    def __len__(self):
+        return len(self.f_list)
+
+    def __getitem__(self, index) -> Tuple[torch.Tensor, torch.Tensor]:
+        el = self.f_list[index]
+        f1, f2, f3, f4, f5, f6, f_sph = el["f"]
+        st, ed, pd = el["start"], el["end"], el["pad"]
+
+        d1, _ = audioread(f1, target_level=self.norm)
+        d2, _ = audioread(f2, target_level=self.norm)  # T,
+        d3, _ = audioread(f3, target_level=self.norm)
+        d4, _ = audioread(f4, target_level=self.norm)
+        d5, _ = audioread(f5, target_level=self.norm)
+        d6, _ = audioread(f6, target_level=self.norm)
+        d_sph, _ = audioread(f_sph, target_level=self.norm)
+
+        d1 = np.pad(d1[st:ed], (0, pd), "constant", constant_values=0)
+        d2 = np.pad(d2[st:ed], (0, pd), "constant", constant_values=0)
+        d3 = np.pad(d3[st:ed], (0, pd), "constant", constant_values=0)
+        d4 = np.pad(d4[st:ed], (0, pd), "constant", constant_values=0)
+        d5 = np.pad(d5[st:ed], (0, pd), "constant", constant_values=0)
+        d6 = np.pad(d6[st:ed], (0, pd), "constant", constant_values=0)
+        d_sph = np.pad(d_sph[st:ed], (0, pd), "constant", constant_values=0)
+
+        d_mic = np.stack([d1, d2, d3, d4, d5, d6], axis=-1)
+
+        return torch.from_numpy(d_mic).float(), torch.from_numpy(d_sph).float()
+
+    def __iter__(self):
+        self.pick_idx = 0
+        return self
+
+    def __next__(self) -> Tuple[torch.Tensor, torch.Tensor, str]:
+        """used for predict api
+        return: data, relative path
+        """
+        if self.pick_idx < len(self.f_list):
+            el = self.f_list[self.pick_idx]
+            f1, f2, f3, f4, f5, f6, f_sph = el["f"]
+            st, ed, pd = el["start"], el["end"], el["pad"]
+            d1, _ = audioread(f1, target_level=self.norm)
+            d2, _ = audioread(f2, target_level=self.norm)
+            d3, _ = audioread(f3, target_level=self.norm)
+            d4, _ = audioread(f4, target_level=self.norm)
+            d5, _ = audioread(f5, target_level=self.norm)
+            d6, _ = audioread(f6, target_level=self.norm)
+            d_sph, _ = audioread(f_sph, target_level=self.norm)
+            d1 = np.pad(d1[st:ed], (0, pd), "constant", constant_values=0)
+            d2 = np.pad(d2[st:ed], (0, pd), "constant", constant_values=0)
+            d3 = np.pad(d3[st:ed], (0, pd), "constant", constant_values=0)
+            d4 = np.pad(d4[st:ed], (0, pd), "constant", constant_values=0)
+            d5 = np.pad(d5[st:ed], (0, pd), "constant", constant_values=0)
+            d6 = np.pad(d6[st:ed], (0, pd), "constant", constant_values=0)
+            d_sph = np.pad(d_sph[st:ed], (0, pd), "constant", constant_values=0)
+
+            data = np.stack([d1, d2, d3, d4, d5, d6], axis=-1)
+            self.pick_idx += 1
+
+            fname = (
+                f1
+                if self.return_abspath
+                else str(Path(f1).relative_to(self.dir.parent))
+            )
+            return (
+                torch.from_numpy(data).float()[None, :],
+                torch.from_numpy(d_sph).float()[None, :],
+                fname,
+            )
+        else:
+            raise StopIteration
+
+
+def clip_to_shortest(batch: List):
+    batch.sort(key=lambda x: x[0].shape[-1], reverse=True)
+
+    for x in batch:
+        print(x[0].shape, x[1].shape)
+    print("done")
+
+
+def pad_to_longest(batch):
+    """
+    batch: [(data, label), (...), ...], B,T,C
+    the input data, label must with shape (T,C) if time domain
+    """
+    batch.sort(key=lambda x: x[0].shape[0], reverse=True)  # data length
+
+    seq_len = [d.size(0) for d, _ in batch]
+    data, label = zip(*batch)  # B,T,C
+    data = pad_sequence(data, batch_first=True).float()
+    label = pad_sequence(label, batch_first=True).float()
+
+    # data = pack_padded_sequence(data, seq_len, batch_first=True, enforce_sorted=True)
+
+    return data, label, torch.tensor(seq_len)
+
+
 if __name__ == "__main__":
     # dset = AECTrunk(
     #     "/home/deepnetni/trunk/gene-AEC-train-100-30",
@@ -485,10 +789,33 @@ if __name__ == "__main__":
     #     align=True,
     # )
 
-    dset = NSTrunk(
-        "/home/deepnetni/trunk/vae_dns_p07",
-        flist="list.csv",
-        patten="**/*_nearend.wav",
-        # keymap=("nearend.wav", "target.wav"),
-        clean_dirname="/home/deepnetni/trunk/vae_dns",
+    # dset = NSTrunk(
+    #     "/home/deepnetni/trunk/vae_dns_p07",
+    #     flist="list.csv",
+    #     patten="**/*_nearend.wav",
+    #     # keymap=("nearend.wav", "target.wav"),
+    #     clean_dirname="/home/deepnetni/trunk/vae_dns",
+    # )
+
+    dset = CHiMe3(
+        "/home/deepnetni/trunk/CHiME3",
+        subdir="train",
+        nlen=5.0,
+        min_len=1.0,
     )
+    train_loader = DataLoader(
+        dset,
+        batch_size=3,
+        pin_memory=True,
+        shuffle=True,
+        collate_fn=pad_to_longest,
+    )
+
+    batch = iter(train_loader)
+    data, label, l = next(batch)
+    print(data.shape, label.shape, l)
+
+    # rnn = nn.LSTM(input_size=6, hidden_size=10, num_layers=1, batch_first=True)
+    # out, (h, c) = rnn(inp)
+    # out, len = pad_packed_sequence(out, batch_first=True)
+    # print(out.shape)
