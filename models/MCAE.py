@@ -129,6 +129,8 @@ class MCAE_BLK(nn.Module):
         )
 
     def encode(self, x):
+        x = x[:, self.n_channel, ...]
+
         feats = self.encoder(x)  # b,c,t,f
         mu = self.fc_mu(feats)
         logvar = self.fc_logvar(feats)
@@ -156,9 +158,8 @@ class MCAE_BLK(nn.Module):
         b,c,t,f
         """
         x_hat = x[:, self.x_channel, ...]
-        x_ = x[:, self.n_channel, ...]
 
-        mu, logvar = self.encode(x_)  # b,t,f,c
+        mu, logvar = self.encode(x)  # b,t,f,c
         z = self.reparameterize(mu, logvar)
 
         return (
@@ -214,6 +215,8 @@ class MCAE_BLK_Dense(nn.Module):
         )
 
     def encode(self, x):
+        x = x[:, self.n_channel, ...]
+
         feats = self.encoder(x)  # b,c,t,f
         mu = self.fc_mu(feats)  # b,t,z
         logvar = self.fc_logvar(feats)  # b,t,z
@@ -242,9 +245,8 @@ class MCAE_BLK_Dense(nn.Module):
         b,c,t,f
         """
         x_hat = x[:, self.x_channel, ...]
-        x_ = x[:, self.n_channel, ...]
 
-        z, mu, logvar = self.encode(x_)  # b,t,z
+        z, mu, logvar = self.encode(x)  # b,t,z
 
         return self.decode(z), x_hat, z, mu, logvar
 

@@ -35,7 +35,7 @@ class DenseNet(nn.Module):
                         out_channels=in_channels,
                         kernel_size=kernel_size,
                     ),
-                    nn.InstanceNorm2d(in_channels, affine=True),
+                    nn.BatchNorm2d(in_channels, affine=True),
                     nn.PReLU(),
                 )
             )

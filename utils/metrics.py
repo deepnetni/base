@@ -12,6 +12,29 @@ def l2_norm(s, keepdim=False):
     return torch.linalg.norm(s, dim=-1, keepdim=keepdim)
 
 
+def compute_sdr(
+    sph: Union[torch.Tensor, np.ndarray],
+    est: Union[torch.Tensor, np.ndarray],
+    zero_mean=True,
+):
+    """
+    input: B,T
+    """
+    is_numpy = False
+    if isinstance(sph, np.ndarray) or isinstance(est, np.ndarray):
+        sph = torch.from_numpy(sph)
+        est = torch.from_numpy(est)
+        is_numpy = True
+    eps = torch.finfo(sph.dtype).eps
+    if zero_mean is True:
+        s = sph - torch.mean(sph, dim=-1, keepdim=True)
+        s_hat = est - torch.mean(est, dim=-1, keepdim=True)
+    else:
+        s = sph
+        s_hat = est
+    pass
+
+
 def compute_si_snr(
     sph: Union[torch.Tensor, np.ndarray],
     est: Union[torch.Tensor, np.ndarray],
@@ -89,3 +112,17 @@ def compute_stoi(lbl, est, fs=16000):
         print(e)
 
     return score  # scaler
+
+
+if __name__ == "__main__":
+    inp = np.random.randn(16000) + 10
+    lbl = np.random.randn(16000) + 10
+
+    l = compute_pesq(lbl, inp)
+    print(l)
+
+    inp = np.concatenate([inp, torch.zeros(20000)], axis=-1)
+    lbl = np.concatenate([lbl, torch.zeros(20000)], axis=-1)
+    l = compute_pesq(lbl, inp)
+    print(l)
+    pass

@@ -157,3 +157,22 @@ class MultiResolutionSTFTLoss(torch.nn.Module):
         mag_loss /= len(self.stft_losses)
 
         return self.factor_sc * sc_loss, self.factor_mag * mag_loss
+
+
+if __name__ == "__main__":
+    inp = torch.randn(1, 16000)
+    lbl = torch.randn(1, 16000)
+    loss = MultiResolutionSTFTLoss(
+        fft_sizes=[1024, 512, 256],
+        hop_sizes=[512, 256, 128],
+        win_lengths=[1024, 512, 256],
+    )
+    sc_loss, mag_loss = loss(inp, lbl)
+    print(sc_loss)
+    inp = torch.concat([inp, torch.zeros(1, 11000)], dim=-1)
+    lbl = torch.concat([lbl, torch.zeros(1, 11000)], dim=-1)
+    print(inp.shape, lbl.shape)
+    sc_loss, mag_loss = loss(inp, lbl)
+    print(sc_loss)
+
+    pass

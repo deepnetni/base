@@ -140,6 +140,10 @@ class Engine(object):
     def _pesq(
         sph: np.ndarray, enh: np.ndarray, fs: int, norm: bool = False, njobs: int = 10
     ) -> np.ndarray:
+        if isinstance(sph, torch.Tensor):
+            sph = sph.cpu().detach().numpy()
+            enh = sph.cpu().detach().numpy()
+
         scores = np.array(
             Parallel(n_jobs=10)(
                 delayed(compute_pesq)(s, e, fs, norm) for s, e in zip(sph, enh)

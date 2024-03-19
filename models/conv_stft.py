@@ -18,8 +18,8 @@ class STFT(nn.Module):
         self,
         nframe: int = 512,
         nhop: int = 128,
-        win: Union[str, np.ndarray] = "hann",
         nfft: Optional[int] = None,
+        win: Union[str, np.ndarray] = "hann",
         center: bool = True,
     ):
         super().__init__()
@@ -144,7 +144,7 @@ def verify_w_librosa():
     xk = net.transform(inp)
     print("xk", xk.shape)
     out = net.inverse(xk)
-    print("xk_", out.shape, net.post_nlen(10000))
+    print("xk_", out.shape, net.nLen(10000))
     # print(torch.sum((inp - out) ** 2))
 
     np_inputs = inp.numpy().reshape(-1)
@@ -203,3 +203,7 @@ def verify_self():
 if __name__ == "__main__":
     # verify_self()
     verify_w_librosa()
+
+    net = STFT(512, 256)
+    out = net.nLen(80000)
+    print(out)
