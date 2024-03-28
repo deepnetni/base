@@ -9,7 +9,7 @@ from typing import Dict
 import numpy as np
 from tqdm import tqdm
 
-sys.path.append(str(Path(__file__).parent.parent))
+sys.path.append(str(Path(__file__).parent.parent.parent))
 from utils.audiolib import (
     audioread,
     audiowrite,

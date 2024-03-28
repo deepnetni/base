@@ -1,9 +1,8 @@
 import sys
 from pathlib import Path
+from common.augment_mp import main_aug
 
 sys.path.append(str(Path(__file__).parent.parent))
-
-from augment.augment_mp import main_aug
 
 
 class AudioDset:
@@ -81,5 +80,5 @@ class AECDset:
 if __name__ == "__main__":
     dns_dset = AudioDset("/home/deepni/disk/DNS-Challenge/datasets")
     aec_dset = AECDset("/home/deepni/datasets/AEC-Challenge/datasets")
-    cfg_p = Path("aug.cfg").resolve()
+    cfg_p = str(Path("augment_aec.cfg").resolve())
     main_aug(dns_dset.clean_flist, dns_dset.noise_flist, aec_dset.ref_echo_flist, cfg_p)
