@@ -408,7 +408,7 @@ class dense_encoder(nn.Module):
 
 
 class dense_encoder_mag(nn.Module):
-    def __init__(self, width=96):
+    def __init__(self, width=64):
         super(dense_encoder_mag, self).__init__()
         self.in_channels = 1
         self.out_channels = 1
@@ -416,9 +416,9 @@ class dense_encoder_mag(nn.Module):
         self.inp_conv = nn.Conv2d(
             in_channels=self.in_channels, out_channels=self.width, kernel_size=(1, 1)
         )  # [b, 64, nframes, 512]
-        self.inp_norm = nn.LayerNorm(481)
+        self.inp_norm = nn.LayerNorm(257)
         self.inp_prelu = nn.PReLU(self.width)
-        self.enc_dense1 = DenseBlock(481, 4, self.width)  # [b, 64, nframes, 512]
+        self.enc_dense1 = DenseBlock(4, self.width, 257)  # [b, 64, nframes, 512]
         self.enc_conv1 = nn.Conv2d(
             in_channels=self.width,
             out_channels=self.width,
@@ -426,7 +426,7 @@ class dense_encoder_mag(nn.Module):
             stride=(1, 2),
             padding=(0, 1),
         )  # [b, 64, nframes, 256]
-        self.enc_norm1 = nn.LayerNorm(241)
+        self.enc_norm1 = nn.LayerNorm(129)
         self.enc_prelu1 = nn.PReLU(self.width)
 
         self.enc_conv2 = nn.Conv2d(
@@ -435,7 +435,7 @@ class dense_encoder_mag(nn.Module):
             kernel_size=(1, 3),
             stride=(1, 2),
         )  # [b, 64, nframes, 256]
-        self.enc_norm2 = nn.LayerNorm(120)
+        self.enc_norm2 = nn.LayerNorm(64)
         self.enc_prelu2 = nn.PReLU(self.width)
 
     def forward(self, x):
@@ -497,7 +497,6 @@ class dense_decoder(nn.Module):
         out = self.dec_conv1(out)
 
         out = self.dec_conv2(out)
-        #
         out = self.out_conv(out)
         return out
 
@@ -510,18 +509,18 @@ class dense_decoder_masking(nn.Module):
         self.pad = nn.ConstantPad2d((1, 1, 0, 0), value=0.0)
         self.pad1 = nn.ConstantPad2d((1, 0, 0, 0), value=0.0)
         self.width = width
-        self.dec_dense1 = DenseBlock(120, 4, self.width)
+        self.dec_dense1 = DenseBlock(4, self.width, 64)
 
         self.dec_conv1 = SPConvTranspose2d(
             in_channels=self.width, out_channels=self.width, kernel_size=(1, 3), r=2
         )
-        self.dec_norm1 = nn.LayerNorm(240)
+        self.dec_norm1 = nn.LayerNorm(128)
         self.dec_prelu1 = nn.PReLU(self.width)
 
         self.dec_conv2 = SPConvTranspose2d(
             in_channels=self.width, out_channels=self.width, kernel_size=(1, 3), r=2
         )
-        self.dec_norm2 = nn.LayerNorm(481)
+        self.dec_norm2 = nn.LayerNorm(257)
         self.dec_prelu2 = nn.PReLU(self.width)
 
         self.mask1 = nn.Sequential(
@@ -632,8 +631,8 @@ class DF_dense_decoder(nn.Module):
             nn.ConstantPad2d((1, 1, 0, 0), value=0.0),
             SPConvTranspose2d(
                 in_channels=in_channel, out_channels=in_channel, kernel_size=(1, 3), r=2
-            ),
-            nn.ConstantPad2d((1, 0, 0, 0), value=0.0),
+            ),  # B,C,T,2F
+            nn.ConstantPad2d((1, 0, 0, 0), value=0.0),  # BCT,2F+1
             nn.LayerNorm(feature_size * 2 + 1),
             nn.PReLU(in_channel),
         )
@@ -742,11 +741,17 @@ class DF_aia_complex_trans_ri(nn.Module):
 
 
 class DF_AIA_TRANS(nn.Module):
-    def __init__(self, in_channesl: int, feature_size: int, mid_channels: int):
+    def __init__(
+        self,
+        in_channels: int,
+        feature_size: int,
+        mid_channels: int,
+        ref_channel: int = 4,
+    ):
         super().__init__()
         self.stft = STFT(512, 256)
         self.en_ri = dense_encoder(
-            in_channels=in_channesl * 2,
+            in_channels=in_channels * 2,
             out_channels=mid_channels,
             feature_size=feature_size,
             depth=4,
@@ -754,24 +759,27 @@ class DF_AIA_TRANS(nn.Module):
 
         self.dual_trans = AIA_Transformer_cau(mid_channels, mid_channels, num_layers=4)
         self.aham = AHAM(input_channel=mid_channels)
+        self.ref_channel = ref_channel
+        self.in_channels = in_channels
 
         self.de1 = dense_decoder(
             in_channels=mid_channels,
-            out_channels=in_channesl,
+            out_channels=1,
             feature_size=feature_size // 4,
             depth=4,
         )
         self.de2 = dense_decoder(
             in_channels=mid_channels,
-            out_channels=in_channesl,
+            out_channels=1,
             feature_size=feature_size // 4,
             depth=4,
         )
 
-        self.DF_de = DF_dense_decoder(mid_channels, feature_size // 4, 10)
-
         self.df_order = 5
         self.df_bins = feature_size
+        self.DF_de = DF_dense_decoder(
+            mid_channels, feature_size // 4, 2 * self.df_order
+        )
 
         self.df_op = DF(num_freqs=self.df_bins, frame_size=self.df_order, lookahead=0)
 
@@ -781,18 +789,13 @@ class DF_AIA_TRANS(nn.Module):
         """
         x: B,T,C
         """
-        nC = x.size(-1)
-        xk_lr, xk_li = [], []
-        for i in range(nC):
-            dt = x[..., 0]
-            xk = self.stft.transform(dt)
-            xk_lr.append(xk[:, 0, ...])
-            xk_li.append(xk[:, 1, ...])
+        nB = x.size(0)
+        x = rearrange(x, "b t c-> (b c) t")
+        xk = self.stft.transform(x)
+        x = rearrange(xk, "(b m) c t f->b (c m) t f", b=nB)
 
-        x = torch.stack([*xk_lr, *xk_li], dim=1)
-
-        noisy_real = x[:, :nC, :, :]
-        noisy_imag = x[:, nC:, :, :]
+        noisy_real = x[:, self.ref_channel, :, :]
+        noisy_imag = x[:, self.ref_channel + self.in_channels, :, :]
 
         # ri components enconde+ aia_transformer
         x_ri = self.en_ri(x)  # BCTF
@@ -802,17 +805,19 @@ class DF_AIA_TRANS(nn.Module):
         # real and imag decode
         x_real = self.de1(x_ri)
         x_imag = self.de2(x_ri)
-        # x_real = x_real.squeeze(dim=1)
-        # x_imag = x_imag.squeeze(dim=1)
+        x_real = x_real.squeeze(dim=1)
+        x_imag = x_imag.squeeze(dim=1)
 
-        df_coefs = self.DF_de(x_ri)
+        df_coefs = self.DF_de(x_ri)  # BCTF
         df_coefs = df_coefs.permute(0, 2, 3, 1)  # B,T,F,C
         df_coefs = self.df_out_transform(df_coefs).contiguous()
 
         # x_com=torch.stack((x_real, x_imag), dim=1)
 
-        enh_real = torch.mean(noisy_real * x_real - noisy_imag * x_imag, dim=1)
-        enh_imag = torch.mean(noisy_real * x_imag + noisy_imag * x_real, dim=1)  # B,T,F
+        enh_real = noisy_real * x_real - noisy_imag * x_imag
+        enh_imag = noisy_real * x_imag + noisy_imag * x_real
+        # enh_real = x_real
+        # enh_imag = x_imag
 
         enhanced_D = torch.stack([enh_real, enh_imag], 3)
         enhanced_D = enhanced_D.unsqueeze(1)
@@ -833,8 +838,120 @@ class DF_AIA_TRANS(nn.Module):
         return out_wav
 
 
+class dual_aia_trans_chime(nn.Module):
+    def __init__(
+        self,
+        in_channels: int,
+        feature_size: int,
+        mid_channels: int,
+        ref_channel: int = 4,
+    ):
+        super().__init__()
+
+        self.stft = STFT(512, 256)
+        self.en_ri = dense_encoder(
+            in_channels=in_channels * 2,
+            out_channels=mid_channels,
+            feature_size=feature_size,
+            depth=4,
+        )  # B, mid_c, T, F // 4
+
+        self.en_mag = dense_encoder_mag(mid_channels)
+        self.aia_trans_merge = AIA_Transformer_merge(
+            mid_channels * 2, mid_channels, num_layers=4
+        )
+        self.aham = AHAM_ori(input_channel=mid_channels)
+        self.aham_mag = AHAM_ori(input_channel=mid_channels)
+
+        # self.simam = simam_module()
+        # self.simam_mag = simam_module()
+
+        self.de1 = dense_decoder(
+            in_channels=mid_channels,
+            out_channels=1,
+            feature_size=feature_size // 4,
+            depth=4,
+        )
+        self.de2 = dense_decoder(
+            in_channels=mid_channels,
+            out_channels=1,
+            feature_size=feature_size // 4,
+            depth=4,
+        )
+        self.de_mag_mask = dense_decoder_masking(mid_channels)
+
+    def forward(self, x):
+        """
+        Args:
+            x: B,T,C
+
+        Returns:
+
+        """
+        nB = x.size(0)
+        x = rearrange(x, "b t c-> (b c) t")
+        xk = self.stft.transform(x)
+        # x shape is B,12,T,F
+        x = rearrange(xk, "(b m) c t f->b (c m) t f", b=nB)
+
+        noisy_real = x[:, 4, :, :]
+        noisy_imag = x[:, 10, :, :]
+
+        noisy_spec = torch.stack([noisy_real, noisy_imag], 1)
+        x_mag_ori, x_phase_ori = torch.norm(noisy_spec, dim=1), torch.atan2(
+            noisy_spec[:, -1, :, :], noisy_spec[:, 0, :, :]
+        )
+        x_mag = x_mag_ori.unsqueeze(dim=1)
+
+        # ri/mag components enconde+ aia_transformer_merge
+        x_ri = self.en_ri(x)  # BCTF
+        x_mag_en = self.en_mag(x_mag)
+        x_last_mag, x_outputlist_mag, x_last_ri, x_outputlist_ri = self.aia_trans_merge(
+            x_mag_en, x_ri
+        )  # BCTF, #BCTFG
+
+        x_ri = self.aham(x_outputlist_ri)  # BCT
+        x_mag_en = self.aham_mag(x_outputlist_mag)  # BCTF
+
+        # x_ri = self.simam(x_ri)
+        # x_mag_en = self.simam_mag(x_mag_en)
+        x_mag_mask = self.de_mag_mask(x_mag_en)
+        x_mag_mask = x_mag_mask.squeeze(dim=1)
+
+        # real and imag decode
+        x_real = self.de1(x_ri)
+        x_imag = self.de2(x_ri)
+        x_real = x_real.squeeze(dim=1)
+        x_imag = x_imag.squeeze(dim=1)
+        # magnitude and ri components interaction
+
+        x_mag_out = x_mag_mask * x_mag_ori
+        # x_r_out,x_i_out = (x_mag_out * torch.cos(x_phase_ori) + x_real), (x_mag_out * torch.sin(x_phase_ori)+ x_imag)
+
+        ##### recons by DCCRN
+        mask_phase = torch.atan2(x_imag, x_real)
+
+        est_phase = x_phase_ori + mask_phase
+
+        x_r_out = x_mag_out * torch.cos(est_phase)
+        x_i_out = x_mag_out * torch.sin(est_phase)
+
+        # x_com_out = torch.stack((x_r_out,x_i_out),dim=1)
+
+        feat = torch.stack([x_r_out, x_i_out], dim=1)
+
+        out_wav = self.stft.inverse(feat)  # B, 1, T
+        out_wav = torch.squeeze(out_wav, 1)
+        out_wav = torch.clamp(out_wav, -1, 1)
+
+        return out_wav
+
+
 if __name__ == "__main__":
-    model = DF_AIA_TRANS(in_channesl=6, feature_size=257, mid_channels=24)  # C,F,C'
+    # model = DF_AIA_TRANS(in_channels=6, feature_size=257, mid_channels=96)  # C,F,C'
+    model = dual_aia_trans_chime(
+        in_channels=6, feature_size=257, mid_channels=96
+    )  # C,F,C'
     model.eval()
     # x = torch.FloatTensor(4, 2, 10, 481)
     #

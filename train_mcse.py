@@ -6,7 +6,9 @@ from einops import rearrange
 import numpy as np
 import pesq
 import torch
-from matplotlib import shutil
+
+# from matplotlib import pyplot as plt
+import shutil
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset
 
@@ -23,7 +25,13 @@ from utils.stft_loss import MultiResolutionSTFTLoss
 from utils.trunk import CHiMe3, pad_to_longest
 from models.conv_stft import STFT
 from models.MCAE import MCAE
-from models.aia_trans import DF_AIA_TRANS
+from models.aia_trans import DF_AIA_TRANS, dual_aia_trans_chime
+from models.McNet import MCNet, MCNet_wED
+from torchmetrics.functional.audio import signal_distortion_ratio as SDR
+from torchmetrics.functional.audio import (
+    scale_invariant_signal_distortion_ratio as si_sdr,
+)
+from models.APC_SNR.apc_snr import APC_SNR_multi_filter
 
 
 class Train(Engine):
@@ -32,14 +40,14 @@ class Train(Engine):
         train_dset: Dataset,
         valid_dset: Dataset,
         vtest_dset: Dataset,
-        net_ae: torch.nn.Module,
+        # net_ae: torch.nn.Module,
         batch_sz: int,
         **kwargs,
     ):
         super().__init__(**kwargs)
 
-        self.net_ae = net_ae.to(self.device)
-        self.net_ae.eval()
+        # self.net_ae = net_ae.to(self.device)
+        # self.net_ae.eval()
 
         self.train_loader = DataLoader(
             train_dset,
@@ -50,33 +58,36 @@ class Train(Engine):
             worker_init_fn=self._worker_set_seed,
             generator=self._set_generator(),
         )
+        self.train_dset = train_dset
         # g = torch.Generator()
         # g.manual_seed(0)
         self.valid_loader = DataLoader(
             valid_dset,
-            batch_size=4,
+            batch_size=2,
             # batch_size=1,
-            num_workers=6,
+            num_workers=4,
             pin_memory=True,
-            shuffle=True,
+            shuffle=False,
             worker_init_fn=self._worker_set_seed,
             generator=self._set_generator(),
             collate_fn=pad_to_longest,
             # generator=g,
         )
+        self.valid_dset = valid_dset
 
         self.vtest_loader = DataLoader(
             vtest_dset,
-            batch_size=batch_sz,
+            batch_size=2,
             # batch_size=1,
-            num_workers=6,
+            num_workers=4,
             pin_memory=True,
-            shuffle=True,
+            shuffle=False,
             worker_init_fn=self._worker_set_seed,
             generator=self._set_generator(),
             collate_fn=pad_to_longest,
             # generator=g,
         )
+        self.vtest_dset = vtest_dset
 
         # self.vtest_loader = (
         #     [vtest_dset] if isinstance(vtest_dset, Dataset) else vtest_dset
@@ -91,6 +102,16 @@ class Train(Engine):
             win_lengths=[1024, 512, 256],
         ).to(self.device)
         self.ms_stft_loss.eval()
+
+        self.raw_metrics = self._load_dsets_metrics(self.dsets_mfile)
+
+        # self.APC_criterion = APC_SNR_multi_filter(
+        #     model_hop=128,
+        #     model_winlen=512,
+        #     mag_bins=256,
+        #     theta=0.01,
+        #     hops=[8, 16, 32, 64],
+        # ).to(self.device)
 
     @staticmethod
     def _config_optimizer(name: str, params, **kwargs):
@@ -108,13 +129,13 @@ class Train(Engine):
         # return {
         #     "loss": loss,
         #     "pmsqe": loss_pmsqe.detach(),
-        #     "apc_snr": loss_APC_SNR.detach(),
+        #     "apc_snr": 0.05 * loss_APC_SNR.detach(),
         # }
-        # sisnr_lv = loss_sisnr(clean, enh)
-        # specs_enh = self.stft.transform(enh)
-        # specs_sph = self.stft.transform(clean)
+        # sisdr_lv = loss_sisnr(clean, enh)
+        specs_enh = self.stft.transform(enh)
+        specs_sph = self.stft.transform(clean)
+        pmsqe_score = loss_pmsqe(specs_sph, specs_enh)
         # mse_mag, mse_pha = loss_compressed_mag(specs_sph, specs_enh)
-        # pmsqe_score = loss_pmsqe(specs_sph, specs_enh)
         # loss = 0.05 * sisnr_lv + mse_pha + mse_mag + pmsq_score
         # return {
         #     "loss": loss,
@@ -123,9 +144,9 @@ class Train(Engine):
         #     "pha": mse_pha.detach(),
         #     "pmsq": pmsq_score.detach(),
         # }
-
+        # sdr_lv = -SDR(preds=enh, target=clean).mean()
         sc_loss, mag_loss = self.ms_stft_loss(enh, clean)
-        loss = sc_loss + mag_loss  # + 0.05 * pmsqe_score
+        loss = sc_loss + mag_loss + 0.3 * pmsqe_score  # + 0.05 * sdr_lv
         # else:
         #     cln_ = clean[0, : nlen[0]]  # B,T
         #     enh_ = enh[0, : nlen[0]]
@@ -142,6 +163,8 @@ class Train(Engine):
             "loss": loss,
             "sc": sc_loss.detach(),
             "mag": mag_loss.detach(),
+            "pmsqe": 0.3 * pmsqe_score.detach(),
+            # "sdr": 0.05 * sdr_lv.detach(),
         }
 
         # pase loss
@@ -158,17 +181,17 @@ class Train(Engine):
 
         pbar = tqdm(
             self.train_loader,
-            ncols=120,
+            ncols=160,
             leave=True,
             desc=f"Epoch-{epoch}/{self.epochs}",
         )
         for mic, sph in pbar:
             mic = mic.to(self.device)  # B,T,6
             sph = sph.to(self.device)  # B,T
+            # print("##", mic.shape)
 
             self.optimizer.zero_grad()
             enh = self.net(mic)
-            # enh = self.net()
             loss_dict = self.loss_fn(sph[:, : enh.size(-1)], enh)
 
             loss = loss_dict["loss"]
@@ -183,36 +206,108 @@ class Train(Engine):
 
         return losses_rec.state_dict()
 
-    def valid_fn(self, sph: Tensor, enh: Tensor, nlen_list) -> Dict:
+    def _valid_dsets(self):
+        dset_dict = {}
+        # -----------------------#
+        ##### valid dataset  #####
+        # -----------------------#
+        metric_rec = REC()
+        pbar = tqdm(
+            self.valid_loader,
+            ncols=120,
+            leave=False,
+            desc=f"v-{self.valid_dset.dirname}",
+        )
+
+        for mic, sph, nlen in pbar:
+            mic = mic.to(self.device)  # B,T,6
+            sph = sph.to(self.device)  # b,c,t,f
+            nlen = self.stft.nLen(nlen).to(self.device)  # B,
+
+            metric_dict = self.valid_fn(sph, mic[..., 4], nlen, return_loss=False)
+            metric_dict.pop("score")
+            # record the loss
+            metric_rec.update(metric_dict)
+            pbar.set_postfix(**metric_rec.state_dict())
+
+        dset_dict["valid"] = metric_rec.state_dict()
+
+        # -----------------------#
+        ##### vtest dataset ######
+        # -----------------------#
+        metric_rec = REC()
+        pbar = tqdm(
+            self.vtest_loader,
+            ncols=120,
+            leave=False,
+            desc=f"v-{self.vtest_dset.dirname}",
+        )
+
+        for mic, sph, nlen in pbar:
+            mic = mic.to(self.device)  # B,T,6
+            sph = sph.to(self.device)  # b,c,t,f
+            nlen = self.stft.nLen(nlen).to(self.device)  # B,
+
+            metric_dict = self.valid_fn(sph, mic[..., 4], nlen, return_loss=False)
+            metric_dict.pop("score")
+
+            # record the loss
+            metric_rec.update(metric_dict)
+            pbar.set_postfix(**metric_rec.state_dict())
+
+        dset_dict["vtest"] = metric_rec.state_dict()
+
+        return dset_dict
+
+    def valid_fn(
+        self, sph: Tensor, enh: Tensor, nlen_list: List, return_loss: bool = True
+    ) -> Dict:
         """
-        B,T,M
+        B,T
         """
-        sisnr_l = []
-        pesq_l = []
+        # sisnr_l = []
+        sdr_l = []
 
         B = sph.size(0)
         sph_ = sph[0, : nlen_list[0]]  # B,T
         enh_ = enh[0, : nlen_list[0]]
-        sisnr_l.append(self._si_snr(sph_, enh_))
-        pesq_l.append(compute_pesq(sph_.cpu().numpy(), enh_.cpu().numpy()))
+        # sisnr_l.append(self._si_snr(sph_, enh_))
+        np_l_sph = [sph_.cpu().numpy()]
+        np_l_enh = [enh_.cpu().numpy()]
+        sdr_l.append(SDR(preds=enh_, target=sph_).cpu().numpy())
 
         for i in range(1, B):
             sph_ = sph[i, : nlen_list[i]]  # B,T
             enh_ = enh[i, : nlen_list[i]]
-            sisnr_l.append(self._si_snr(sph_, enh_))
-            pesq_l.append(compute_pesq(sph_.cpu().numpy(), enh_.cpu().numpy()))
-        sisnr = np.array(sisnr_l)
-        sisnr = np.mean(sisnr)
-        pesq = np.array(pesq_l)
-        pesq = np.mean(pesq)
+            np_l_sph.append(sph_.cpu().numpy())
+            np_l_enh.append(enh_.cpu().numpy())
+
+            # sisnr_l.append(self._si_snr(sph_, enh_))
+            sdr_l.append(SDR(preds=enh_, target=sph_).cpu().numpy())
+
+        # sisnr_sc = np.array(sisnr_l).mean()
+        sdr_sc = np.array(sdr_l).mean()
+        pesq_wb_sc = self._pesq(np_l_sph, np_l_enh, fs=16000).mean()
+        pesq_nb_sc = self._pesq(np_l_sph, np_l_enh, fs=16000, mode="nb").mean()
+        stoi_sc = self._stoi(np_l_sph, np_l_enh, fs=16000).mean()
 
         # composite = self._eval(clean, enh, 16000)
         # composite = {k: np.mean(v) for k, v in composite.items()}
         # pesq = composite.pop("pesq")
 
-        state = {"score": sisnr, "sisnr": sisnr, "pesq": pesq}
+        state = {
+            "score": pesq_wb_sc,
+            # "sisnr": sisnr_sc,
+            "sdr": sdr_sc,
+            "pesq": pesq_wb_sc,
+            "pesq_nb": pesq_nb_sc,
+            "stoi": stoi_sc,
+        }
 
-        loss_dict = self.loss_fn(sph[..., : enh.size(-1)], enh, nlen_list)
+        if return_loss:
+            loss_dict = self.loss_fn(sph[..., : enh.size(-1)], enh, nlen_list)
+        else:
+            loss_dict = {}
 
         # return dict(state, **composite)
         return dict(state, **loss_dict)
@@ -222,18 +317,18 @@ class Train(Engine):
 
         pbar = tqdm(
             self.valid_loader,
-            ncols=120,
+            ncols=160,
             leave=True,
             desc=f"Valid-{epoch}/{self.epochs}",
         )
 
-        draw = True
+        draw = False
 
         for mic, sph, nlen in pbar:
             mic = mic.to(self.device)  # B,T,6
             sph = sph.to(self.device)  # b,c,t,f
-            nlen = nlen.to(self.device)  # B
-            nlen = self.stft.nLen(nlen)
+            nlen = self.stft.nLen(nlen).to(self.device)
+            # nlen = nlen.to(self.device)  # B
 
             with torch.no_grad():
                 enh = self.net(mic)  # B,T,M
@@ -250,93 +345,80 @@ class Train(Engine):
             # record the loss
             metric_rec.update(metric_dict)
             pbar.set_postfix(**metric_rec.state_dict())
+            # break
 
-        return metric_rec.state_dict()
+        out = {}
+        for k, v in metric_rec.state_dict().items():
+            if k in self.raw_metrics["valid"]:
+                out[k] = {"raw": self.raw_metrics["valid"][k], "enh": v}
+            else:
+                out[k] = v
+        # return metric_rec.state_dict()
+        return out
 
     def vtest_fn(self, sph: Tensor, enh: Tensor) -> Dict:
         sisnr = self._si_snr(sph, enh)
         sisnr = np.mean(sisnr)
 
-        pesq = self._pesq(
+        pesq_sc = self._pesq(
             sph.cpu().detach().numpy(),
             enh.cpu().detach().numpy(),
             fs=16000,
             norm=False,
-        )
-        pesq = np.mean(pesq)
+        ).mean()
+        # pesq = np.mean(pesq)
         # composite = self._eval(clean, enh, 16000)
         # composite = {k: np.mean(v) for k, v in composite.items()}
         # pesq = composite.pop("pesq")
 
-        stoi = self._stoi(
+        stoi_sc = self._stoi(
             sph.cpu().detach().numpy(),
             enh.cpu().detach().numpy(),
             fs=16000,
-        )
-        stoi = np.mean(stoi)
+        ).mean()
+        # stoi = np.mean(stoi)
 
-        state = {"pesq": pesq, "stoi": stoi, "sisnr": sisnr}
+        state = {"pesq": pesq_sc, "stoi": stoi_sc, "sisnr": sisnr}
 
         # return dict(state, **composite)
         return state
 
-    def vtest_aecmos(self, src_dir, out_dir):
-        import json
-
-        out = os.popen(f"python scripts/aecmos.py --src {src_dir}  --est {out_dir}")
-        return json.loads(out.read())
-
     def _vtest_each_epoch(self, epoch):
-        vtest_metric = {}
+        out = {}
 
-        metric_rec = RECDepot()
-        use_aecmos = False
-        vtest_loader = self.vtest_loader
-
-        dirname = os.path.split(vtest_loader.dirname)[-1]
+        metric_rec = REC()
+        dirname = os.path.split(self.vtest_dset.dirname)[-1]
         pbar = tqdm(
-            vtest_loader,
-            total=len(vtest_loader),
+            self.vtest_loader,
             ncols=120,
             leave=False,
             desc=f"vTest-{epoch}/{dirname}",
         )
-        vtest_outdir = os.path.join(self.vtest_outdir, dirname)
-        shutil.rmtree(vtest_outdir) if os.path.exists(vtest_outdir) else None
+        # vtest_outdir = os.path.join(self.vtest_outdir, dirname)
+        # shutil.rmtree(vtest_outdir) if os.path.exists(vtest_outdir) else None
 
         for mic, sph, nlen in pbar:
-            mic = mic.to(self.device)  # b,c,t,f
-            # sph = sph.to(self.device)  # b,c,t,f
-            nlen = nlen.to(self.device)  # B
-            nlen = self.stft.nLen(nlen)
-
-            item = os.path.split(os.path.dirname(fname))[-1]
+            mic = mic.to(self.device)  # B,T,6
+            sph = sph.to(self.device)  # b,c,t,f
+            nlen = self.stft.nLen(nlen).to(self.device)
 
             with torch.no_grad():
-                enh = self.net(mic, ref)
+                enh = self.net(mic)
 
-            audiowrite(
-                os.path.join(self.vtest_outdir, fname),
-                enh.cpu().squeeze().numpy(),
-                16000,
-            )
-
-            if sph is None:
-                use_aecmos = True
-                continue
-
-            metric_dict = self.vtest_fn(sph[:, : enh.shape[-1]], enh)
+            metric_dict = self.valid_fn(sph, enh, nlen, return_loss=False)
             # record the loss
-            metric_rec.update(item, metric_dict)
+            metric_rec.update(metric_dict)
             # pbar.set_postfix(**metric_rec.state_dict())
+            # break
 
-        if use_aecmos:
-            metric_dict = self.vtest_aecmos(vtest_loader.dirname, vtest_outdir)
-            vtest_metric[dirname] = metric_dict
-        else:
-            vtest_metric[dirname] = metric_rec.state_dict()
-
-        return vtest_metric
+        dirn = {}
+        for k, v in metric_rec.state_dict().items():
+            if k in self.raw_metrics["vtest"]:
+                dirn[k] = {"raw": self.raw_metrics["vtest"][k], "enh": v}
+            else:
+                dirn[k] = v
+        out[dirname] = dirn
+        return out
 
     def _net_flops(self) -> int:
         from thop import profile
@@ -370,30 +452,39 @@ def parse():
 if __name__ == "__main__":
     args = parse()
 
-    cfg_fname = "config/config_mcse.ini"
+    cfg_fname = "config/config_mcse_win.ini"
     cfg = read_ini(cfg_fname)
     print("##", cfg_fname)
 
-    net_ae = MCAE(nframe=512, nhop=256, nfft=512, in_channels=6, latent_dim=128)
-    net_ae.load_state_dict(torch.load("trained_mcae/MCAE/checkpoints/epoch_0030.pth"))
+    # net_ae = MCAE(nframe=512, nhop=256, nfft=512, in_channels=6, latent_dim=128)
+    # net_ae.load_state_dict(torch.load("trained_mcae/MCAE/checkpoints/epoch_0030.pth"))
 
     train_dset = CHiMe3(
-        cfg["dataset"]["train_dset"], subdir="train", nlen=5.0, min_len=1.0
+        cfg["dataset"]["train_dset"], subdir="train", nlen=3.0, min_len=1.0
     )
     valid_dset = CHiMe3(cfg["dataset"]["valid_dset"], subdir="dev")
     test_dsets = CHiMe3(cfg["dataset"]["vtest_dset"], subdir="test")
 
-    net = DF_AIA_TRANS(in_channesl=6, feature_size=257, mid_channels=24)  # C,F,C'
+    # net = DF_AIA_TRANS(in_channels=6, feature_size=257, mid_channels=96)  # C,F,C'
+    net = dual_aia_trans_chime(
+        in_channels=6, feature_size=257, mid_channels=96
+    )  # C,F,C'
+    # net = MCNet(
+    #     in_channels=6, ref_channel=5, sub_freqs=(3, 2), past_ahead=(5, 0)
+    # )  # C,F,C'
+    # net = MCNet_wED(
+    #     in_channels=6, ref_channel=5, sub_freqs=(3, 2), past_ahead=(5, 0)
+    # )  # C,F,C'
 
     init = cfg["config"]
     eng = Train(
         train_dset,
         valid_dset,
         test_dsets,
-        net_ae=net_ae,
+        # net_ae=net_ae,
         net=net,
-        batch_sz=10,
-        valid_first=True,
+        batch_sz=2,
+        valid_first=False,
         **init,
     )
     print(eng)

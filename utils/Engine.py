@@ -19,6 +19,7 @@ from joblib import Parallel, delayed
 from matplotlib import pyplot as plt
 from torch.optim import Optimizer, lr_scheduler
 from torch.utils.tensorboard.writer import SummaryWriter
+from torch.utils.data import DataLoader
 
 from utils.composite_metrics import eval_composite
 from utils.logger import get_logger
@@ -64,7 +65,9 @@ class Engine(object):
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self.name = name
         self.net = net.to(self.device)
-        self.optimizer = self._config_optimizer(optimizer, self.net.parameters())
+        self.optimizer = self._config_optimizer(
+            optimizer, filter(lambda p: p.requires_grad, self.net.parameters())
+        )
         self.scheduler = self._config_scheduler(scheduler, self.optimizer)
         self.epochs = epochs
         self.start_epoch = 1
@@ -73,6 +76,7 @@ class Engine(object):
         self.vtest_outdir = vtest_outdir
         self.best_score = torch.finfo(torch.float32).min
         self.seed = seed
+        # self.dsets_metrics = self._load_dset_valid_info()
 
         # checkpoints
         if os.path.isabs(info_dir):  # abspath
@@ -89,6 +93,7 @@ class Engine(object):
         self.ckpt_file = self.ckpt_dir / "ckpt.pth"
         self.ckpt_best_file = self.ckpt_dir / "best.pth"
         self.valid_first = valid_first
+        self.dsets_mfile = self.info_dir / name / "dset_metrics.json"
 
         self.ckpt_dir.mkdir(
             parents=True, exist_ok=True
@@ -137,22 +142,47 @@ class Engine(object):
         return compute_si_snr(sph, enh, zero_mean).cpu().detach().numpy()
 
     @staticmethod
+    def _snr(
+        sph: Union[np.ndarray, list, torch.Tensor],
+        enh: Union[np.ndarray, list, torch.Tensor],
+        njobs: int = 10,
+    ) -> np.ndarray:
+        scores = np.array(
+            Parallel(n_jobs=njobs)(delayed(compute_snr)(s, e) for s, e in zip(sph, enh))
+        )
+        return scores
+
+    @staticmethod
     def _pesq(
-        sph: np.ndarray, enh: np.ndarray, fs: int, norm: bool = False, njobs: int = 10
+        sph: Union[np.ndarray, list, torch.Tensor],
+        enh: Union[np.ndarray, list, torch.Tensor],
+        fs: int,
+        norm: bool = False,
+        njobs: int = 10,
+        mode: str = "wb",
     ) -> np.ndarray:
         if isinstance(sph, torch.Tensor):
             sph = sph.cpu().detach().numpy()
             enh = sph.cpu().detach().numpy()
 
         scores = np.array(
-            Parallel(n_jobs=10)(
-                delayed(compute_pesq)(s, e, fs, norm) for s, e in zip(sph, enh)
+            Parallel(n_jobs=njobs)(
+                delayed(compute_pesq)(s, e, fs, norm, mode) for s, e in zip(sph, enh)
             )
         )
         return scores
 
     @staticmethod
-    def _stoi(sph: np.ndarray, enh: np.ndarray, fs: int, njobs: int = 10) -> np.ndarray:
+    def _stoi(
+        sph: Union[np.ndarray, list, torch.Tensor],
+        enh: Union[np.ndarray, list, torch.Tensor],
+        fs: int,
+        njobs: int = 10,
+    ) -> np.ndarray:
+        if isinstance(sph, torch.Tensor):
+            sph = sph.cpu().detach().numpy()
+            enh = enh.cpu().detach().numpy()
+
         scores = np.array(
             Parallel(n_jobs=njobs)(
                 delayed(compute_stoi)(s, e, fs) for s, e in zip(sph, enh)
@@ -190,6 +220,18 @@ class Engine(object):
         # seed = torch.initial_seed() % 2**32
         np.random.seed(worker_id)
         random.seed(worker_id)
+
+    def _load_dsets_metrics(self, fname: Path) -> Dict:
+        metrics = {}
+        if fname.exists() is True:
+            with open(str(fname), "r") as fp:
+                metrics = json.load(fp)
+        else:  # file not exists
+            metrics = self._valid_dsets()
+            with open(str(fname), "w+") as fp:
+                json.dump(metrics, fp, indent=2)
+
+        return metrics
 
     def _set_generator(self, seed: int = 0) -> torch.Generator:
         # make sure the dataloader return the same series under different PCs
@@ -330,10 +372,10 @@ class Engine(object):
 
             if self.vtest_per_epoch != 0 and i % self.vtest_per_epoch == 0:
                 self.net.eval()
-                # {"-5":{"pesq":v,"stoi":v},"0":{...}}
                 scores = self._vtest_each_epoch(i)
                 for name, score in scores.items():
                     out = ""
+                    # score {"-5":{"pesq":v,"stoi":v},"0":{...}}
                     for k, v in score.items():
                         out += f"{k}:{v} " + "\n"
                     self.writer.add_text(f"Test-{name}", out, i)
@@ -345,8 +387,8 @@ class Engine(object):
                 self.start_epoch - 1 if self.valid_first is False else self.start_epoch
             )
         self.net.eval()
-        # {"-5":{"pesq":v,"stoi":v},"0":{...}}
         scores = self._vtest_each_epoch(epoch)
+        # {"dir1":{"-5":{"pesq":v,"stoi":v},"0":{...}},"dir2":{...}}
         # out = ""
         # for k, v in score.items():
         #     out += f"{k}:{v} " + "\n"
@@ -362,6 +404,10 @@ class Engine(object):
         # flops, _ = profile(copy.deepcopy(self.net), inputs=(x,), verbose=False)
         # return flops
         raise NotImplementedError
+
+    def _valid_dsets(self) -> Dict:
+        return {}
+        # return {"loss": 0}
 
     def _fit_each_epoch(self, epoch: int) -> Dict:
         raise NotImplementedError

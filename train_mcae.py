@@ -56,6 +56,7 @@ class Train(Engine):
             collate_fn=pad_to_longest,
             # generator=g,
         )
+        self.valid_dset = valid_dset
 
         self.vtest_loader = DataLoader(
             vtest_dset,
@@ -69,6 +70,7 @@ class Train(Engine):
             collate_fn=pad_to_longest,
             # generator=g,
         )
+        self.vtest_dset = vtest_dset
 
         # self.vtest_loader = (
         #     [vtest_dset] if isinstance(vtest_dset, Dataset) else vtest_dset
@@ -281,7 +283,7 @@ class Train(Engine):
         use_aecmos = False
         vtest_loader = self.vtest_loader
 
-        dirname = os.path.split(vtest_loader.dirname)[-1]
+        dirname = os.path.split(self.vtest_dset.dirname)[-1]
         pbar = tqdm(
             vtest_loader,
             total=len(vtest_loader),

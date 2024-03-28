@@ -301,7 +301,7 @@ class MCAE(nn.Module):
         mu = torch.stack(mu_l, dim=-1)
         logvar = torch.stack(var_l, dim=-1)
 
-        return z, mu, logvar
+        return z, mu, logvar  # z shape is B,T,H,C
 
     def forward(self, x):
         """
@@ -341,5 +341,11 @@ if __name__ == "__main__":
     inp = torch.randn(2, 16000, 6)  # B,T,C
     # inp = torch.randn(2, 12, 30, 257)  # B,C,T
     net = MCAE(512, 256)
+    net.load_state_dict(
+        torch.load(r"E:\github\base\trained_mcae\MCAE\checkpoints\epoch_0030.pth")
+    )
     out, lbl, z, _, _ = net(inp)
     print(out.shape, lbl.shape, z.shape)
+
+    z, mu, logvar = net.encode(inp)
+    print(z.shape, mu.shape, logvar.shape)

@@ -65,7 +65,7 @@ def save_f_list(
     dirname = os.path.dirname(fname)
     os.makedirs(dirname) if not os.path.exists(dirname) else None
 
-    with open(fname, "w+") as fp:
+    with open(fname, "w+", newline="") as fp:
         writer = csv.writer(fp)
         for f in f_list:
             if isinstance(relative, tuple):
@@ -131,7 +131,7 @@ def save_f_list_len(
     dirname = os.path.dirname(fname)
     os.makedirs(dirname) if not os.path.exists(dirname) else None
 
-    with open(fname, "w+") as fp:
+    with open(fname, "w+", newline="") as fp:
         writer = csv.writer(fp)
         for f, num in f_list:
             if isinstance(relative, tuple):
@@ -577,6 +577,8 @@ class CHiMe3(Dataset):
         elif subdir == "test":
             self.clean_dir = self.dir / "et05_CH0"
             self.pattern = ("(CAF|PED|STR|BUS).CH1.wav", "BTH.CH0.wav")
+            # self.clean_dir = self.dir / "et05_bth"
+            # self.pattern = ("(CAF|PED|STR|BUS).CH1.wav", "BTH.CH5.wav")
         elif subdir == "dev":
             self.clean_dir = self.dir / "dt05_CH0"
             self.pattern = ("(CAF|PED|STR|BUS).CH1.wav", "BTH.CH0.wav")
@@ -781,6 +783,12 @@ def pad_to_longest(batch):
 
 
 if __name__ == "__main__":
+    # from torchmetrics.functional.audio import signal_noise_ratio as SDR
+    from torchmetrics.functional.audio import signal_distortion_ratio as SDR
+    from tqdm import tqdm
+    import fast_bss_eval
+    from pesq import pesq
+
     # dset = AECTrunk(
     #     "/home/deepnetni/trunk/gene-AEC-train-100-30",
     #     flist="list.csv",
@@ -797,24 +805,35 @@ if __name__ == "__main__":
     #     clean_dirname="/home/deepnetni/trunk/vae_dns",
     # )
 
+    # dset = CHiMe3(
+    #     "/home/deepnetni/trunk/CHiME3",
+    #     subdir="train",
+    #     nlen=5.0,
+    #     min_len=1.0,
+    # )
     dset = CHiMe3(
-        "/home/deepnetni/trunk/CHiME3",
-        subdir="train",
-        nlen=5.0,
-        min_len=1.0,
+        "E:\datasets\CHiME3",
+        subdir="test",
     )
     train_loader = DataLoader(
         dset,
-        batch_size=3,
+        batch_size=1,
         pin_memory=True,
         shuffle=True,
         collate_fn=pad_to_longest,
     )
 
-    batch = iter(train_loader)
-    data, label, l = next(batch)
-    print(data.shape, label.shape, l)
+    sdr_l = []
+    pesq_sc = []
+    for mic, sph, nlen in tqdm(train_loader):
+        mic = mic[..., 4]
+        sdr, sir, sar, perm = fast_bss_eval.bss_eval_sources(sph.numpy(), mic.numpy())
+        sdr_l.append(sdr)
+        # sdr_l.append(SDR(preds=mic, target=sph, zero_mean=True))
+        # pesq_sc.append(pesq(16000, sph[0].numpy(), mic[0].numpy(), "wb"))
 
+    print(np.array(sdr_l).mean())
+    # print(np.array(pesq_sc).mean())
     # rnn = nn.LSTM(input_size=6, hidden_size=10, num_layers=1, batch_first=True)
     # out, (h, c) = rnn(inp)
     # out, len = pad_packed_sequence(out, batch_first=True)

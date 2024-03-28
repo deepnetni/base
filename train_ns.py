@@ -197,7 +197,7 @@ if __name__ == "__main__":
         ),
         net=net,
         batch_sz=6,
-        valid_first=False,
+        valid_first=True,
         **init,
     )
     print(eng)

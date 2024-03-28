@@ -170,7 +170,9 @@ class TransformerEncoderLayer_cau(nn.Module):
             state["activation"] = F.relu
         super().__setstate__(state)
 
-    def forward(self, x, src_mask=None, src_key_padding_mask=None):
+    def forward(
+        self, x, src_mask=None, src_key_padding_mask=None, is_causal: bool = False
+    ):
         r"""Pass the input through the encoder layer.
         Args:
             src: the sequnce to the encoder layer (required).
@@ -198,7 +200,7 @@ class TransformerEncoderLayer_cau(nn.Module):
             value=x_norm,
             attn_mask=src_mask,
             key_padding_mask=src_key_padding_mask,
-            is_causal=True,
+            is_causal=is_causal,
         )
         x = x + self.dropout1(x_)
         x = self.norm1(x)
@@ -327,6 +329,7 @@ class AIA_Transformer_cau(nn.Module):
         #  input --- [b,  c,  num_frames, frame_size]  --- [b, c, dim2, dim1]
         # b, c, dim2, dim1 = input.shape
         nB = x.size(0)
+        nT = x.size(2)
 
         output_list = []
         inp = self.pre_conv(x)
@@ -336,7 +339,7 @@ class AIA_Transformer_cau(nn.Module):
             #     output.permute(3, 0, 2, 1).contiguous().view(dim1, b * dim2, -1)
             # )  # [F, B*T, c]
             x = rearrange(inp, "b c t f -> f (b t) c")
-            x = self.F_trans[i](x)  # [F, B*T, c]
+            x = self.F_trans[i](x, is_causal=False)  # [F, B*T, c]
             # row_output = (
             #     row_output.view(dim1, b, dim2, -1).permute(1, 3, 2, 0).contiguous()
             # )  # [B, C, T, F]
@@ -347,7 +350,9 @@ class AIA_Transformer_cau(nn.Module):
             #     output.permute(2, 0, 3, 1).contiguous().view(dim2, b * dim1, -1)
             # )  # [T, BxF, C]
             x = rearrange(x_f, "b c t f -> t (b f) c")
-            x = self.T_trans[i](x)
+            # mask = torch.ones(nT, nT).triu(1).bool().to(x.device)
+            # x = self.T_trans[i](x, is_causal=True, src_mask=mask)
+            x = self.T_trans[i](x, is_causal=False)
             # col_output = (
             #     col_output.view(dim2, b, dim1, -1).permute(1, 3, 0, 2).contiguous()
             # )  # [T,B,F,C] -> []
@@ -840,22 +845,24 @@ class AHAM(nn.Module):  # aham merge
 
     def forward(self, input_list):  # X:BCTFG Y:B11G1
         batch, channel, frames, frequency = input_list[-1].size()
-        x_list = []
+        # x_list = []
         y_list = []
         for i in range(len(input_list)):
-            input = self.avg_pool(input_list[i])
-            y = self.conv1(input)
-            x = input_list[i].unsqueeze(-1)
-            y = y.unsqueeze(-2)
-            x_list.append(x)
+            input = self.avg_pool(input_list[i])  # BCTF->BC11
+            y = self.conv1(input)  # B111
+            y = y.unsqueeze(-2)  # B1111
+            # x = input_list[i].unsqueeze(-1)  # BCTF1
+            # x_list.append(x)
             y_list.append(y)
+        # x_merge = torch.cat((x_list[0], x_list[1], x_list[2], x_list[3]), dim=-1)
+        # y_merge = torch.cat((y_list[0], y_list[1], y_list[2], y_list[3]), dim=-2)
+        x_merge = torch.stack(input_list, dim=-1)  # BCTF->BCTF4
+        y_merge = torch.cat(y_list, dim=-2)  # B1111->B1141
 
-        x_merge = torch.cat((x_list[0], x_list[1], x_list[2], x_list[3]), dim=-1)
-        y_merge = torch.cat((y_list[0], y_list[1], y_list[2], y_list[3]), dim=-2)
+        y_softmax = self.softmax(y_merge)  # B114_1
 
-        y_softmax = self.softmax(y_merge)
-
-        aham = torch.matmul(x_merge, y_softmax)
+        # aham = torch.matmul(x_merge, y_softmax)  # B
+        aham = x_merge @ y_softmax
         aham = aham.view(batch, channel, frames, frequency)
         aham_output = input_list[-1] + aham
         return aham_output

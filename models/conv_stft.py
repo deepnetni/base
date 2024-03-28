@@ -46,7 +46,7 @@ class STFT(nn.Module):
         len_list = [nlen] if isinstance(nlen, int) else nlen
 
         L = [(l // self.nhop) * self.nhop for l in len_list]
-        return L[0] if isinstance(nlen, int) else L
+        return L[0] if isinstance(nlen, int) else torch.tensor(L)
 
     def init_conv_stft_kernels(self, win=Union[str, np.ndarray], inverse=False):
         if isinstance(win, str):
@@ -132,19 +132,19 @@ class STFT(nn.Module):
         return wav
 
 
-def verify_w_librosa():
+def verify_w_librosa(nlen):
     import librosa
 
-    nframe = 480
-    nhop = 320
-    nfft = 480
+    nframe = 512
+    nhop = 256
+    nfft = 512
 
-    inp = torch.randn(1, 10000)
-    net = STFT(nframe, nhop, "hann", nfft=nfft, center=True)
+    inp = torch.randn(1, nlen)
+    net = STFT(nframe, nhop, nfft, "hann", center=False)
     xk = net.transform(inp)
     print("xk", xk.shape)
     out = net.inverse(xk)
-    print("xk_", out.shape, net.nLen(10000))
+    print("xk_", out.shape, net.nLen(nlen))
     # print(torch.sum((inp - out) ** 2))
 
     np_inputs = inp.numpy().reshape(-1)
@@ -154,7 +154,7 @@ def verify_w_librosa():
         n_fft=nfft,
         hop_length=nhop,
         window="hann",
-        center=True,
+        center=False,
         # center=False,
     )
     print(f"libros:{librosa_stft.shape}, {xk.shape}")
@@ -165,7 +165,7 @@ def verify_w_librosa():
         win_length=nframe,
         n_fft=nfft,
         window="hann",
-        center=True,
+        center=False,
         # center=False,
     )
     print(f"ilibrosa:{librosa_istft.shape}")
@@ -202,8 +202,9 @@ def verify_self():
 
 if __name__ == "__main__":
     # verify_self()
-    verify_w_librosa()
+    nlen = 10000
+    verify_w_librosa(nlen)
 
-    net = STFT(512, 256)
-    out = net.nLen(80000)
+    net = STFT(512, 256, center=True)
+    out = net.nLen(nlen)
     print(out)
