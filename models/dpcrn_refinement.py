@@ -22,7 +22,7 @@ from models.complexnn import (
 from models.conv_stft import STFT
 from models.ft_lstm import FTLSTM_RESNET
 from models.CMGAN.generator import DilatedDenseNet
-from models.Fusion.ms_cam import AFF, MS_CAM, MS_SELF_CAM, MS_CAM_F
+from models.Fusion.ms_cam import AFF, MS_SELF_CAM, MS_CAM_F
 
 
 class DPCRN_REFINEMENT(nn.Module):

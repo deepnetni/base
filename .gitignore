@@ -7,3 +7,4 @@ trained_*/
 *draw/
 vtest*/
 csvs/
+*imdpcrn*.ini

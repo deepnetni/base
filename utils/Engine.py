@@ -96,7 +96,7 @@ class Engine(object):
         self.ckpt_best_file = self.ckpt_dir / "best.pth"
         self.valid_first = valid_first
         self.dsets_mfile = (
-            dsets_raw_metrics
+            self.info_dir / dsets_raw_metrics
             if dsets_raw_metrics != ""
             else self.info_dir / name / "dset_metrics.json"
         )
@@ -227,8 +227,11 @@ class Engine(object):
         np.random.seed(worker_id)
         random.seed(worker_id)
 
-    def _load_dsets_metrics(self, fname: Path) -> Dict:
+    def _load_dsets_metrics(self, fname: Optional[Path] = None) -> Dict:
+        """load dataset metrics provided by `self._valid_dsets`"""
         metrics = {}
+        fname = self.dsets_mfile if fname is None else fname
+
         if fname.exists() is True:
             with open(str(fname), "r") as fp:
                 metrics = json.load(fp)
@@ -412,6 +415,10 @@ class Engine(object):
         raise NotImplementedError
 
     def _valid_dsets(self) -> Dict:
+        """return metrics of valid & test dataset
+        Return:
+            {'valid':{"pesq":xx, "STOI":xx,...}, "test":{...}}
+        """
         return {}
         # return {"loss": 0}
 
