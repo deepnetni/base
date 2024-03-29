@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from .conformer import ConformerBlock
+from conformer import ConformerBlock
 
 
 class DilatedDenseNet(nn.Module):
@@ -199,3 +199,9 @@ class TSCNet(nn.Module):
         final_imag = mag_imag + complex_out[:, 1, :, :].unsqueeze(1)
 
         return final_real, final_imag
+
+
+if __name__ == "__main__":
+    net = TSCNet()
+    inp = torch.randn(1, 2, 10, 201)
+    out = net(inp)

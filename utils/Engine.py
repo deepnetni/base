@@ -61,6 +61,8 @@ class Engine(object):
         vtest_per_epoch: int = 0,
         valid_first: bool = False,
         vtest_outdir: str = "vtest",
+        dsets_raw_metrics: str = "",
+        **kwargs,
     ):
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self.name = name
@@ -93,7 +95,11 @@ class Engine(object):
         self.ckpt_file = self.ckpt_dir / "ckpt.pth"
         self.ckpt_best_file = self.ckpt_dir / "best.pth"
         self.valid_first = valid_first
-        self.dsets_mfile = self.info_dir / name / "dset_metrics.json"
+        self.dsets_mfile = (
+            dsets_raw_metrics
+            if dsets_raw_metrics != ""
+            else self.info_dir / name / "dset_metrics.json"
+        )
 
         self.ckpt_dir.mkdir(
             parents=True, exist_ok=True

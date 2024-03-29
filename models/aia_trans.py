@@ -410,7 +410,7 @@ class dense_encoder(nn.Module):
 class dense_encoder_mag(nn.Module):
     def __init__(self, width=64):
         super(dense_encoder_mag, self).__init__()
-        self.in_channels = 1
+        self.in_channels = 6
         self.out_channels = 1
         self.width = width
         self.inp_conv = nn.Conv2d(
@@ -894,14 +894,16 @@ class dual_aia_trans_chime(nn.Module):
         # x shape is B,12,T,F
         x = rearrange(xk, "(b m) c t f->b (c m) t f", b=nB)
 
-        noisy_real = x[:, 4, :, :]
-        noisy_imag = x[:, 10, :, :]
+        spec_r, spec_i = x.chunk(2, dim=1)
+        x_mag = (spec_r**2 + spec_i**2) ** 0.5
 
-        noisy_spec = torch.stack([noisy_real, noisy_imag], 1)
-        x_mag_ori, x_phase_ori = torch.norm(noisy_spec, dim=1), torch.atan2(
-            noisy_spec[:, -1, :, :], noisy_spec[:, 0, :, :]
-        )
-        x_mag = x_mag_ori.unsqueeze(dim=1)
+        # noisy_real = x[:, 4, :, :]
+        # noisy_imag = x[:, 10, :, :]
+        # noisy_spec = torch.stack([noisy_real, noisy_imag], 1)
+        # x_mag_ori, x_phase_ori = torch.norm(noisy_spec, dim=1), torch.atan2(
+        #     noisy_spec[:, -1, :, :], noisy_spec[:, 0, :, :]
+        # )
+        # x_mag = x_mag_ori.unsqueeze(dim=1)
 
         # ri/mag components enconde+ aia_transformer_merge
         x_ri = self.en_ri(x)  # BCTF
@@ -923,22 +925,24 @@ class dual_aia_trans_chime(nn.Module):
         x_imag = self.de2(x_ri)
         x_real = x_real.squeeze(dim=1)
         x_imag = x_imag.squeeze(dim=1)
+
+        x_real = x_real * x_mag_mask
+        x_imag = x_imag * x_mag_mask
         # magnitude and ri components interaction
 
-        x_mag_out = x_mag_mask * x_mag_ori
-        # x_r_out,x_i_out = (x_mag_out * torch.cos(x_phase_ori) + x_real), (x_mag_out * torch.sin(x_phase_ori)+ x_imag)
+        # x_mag_out = x_mag_mask * x_mag_ori
 
         ##### recons by DCCRN
-        mask_phase = torch.atan2(x_imag, x_real)
+        # mask_phase = torch.atan2(x_imag, x_real)
 
-        est_phase = x_phase_ori + mask_phase
+        # est_phase = x_phase_ori + mask_phase
 
-        x_r_out = x_mag_out * torch.cos(est_phase)
-        x_i_out = x_mag_out * torch.sin(est_phase)
+        # x_r_out = x_mag_out * torch.cos(est_phase)
+        # x_i_out = x_mag_out * torch.sin(est_phase)
 
         # x_com_out = torch.stack((x_r_out,x_i_out),dim=1)
 
-        feat = torch.stack([x_r_out, x_i_out], dim=1)
+        feat = torch.stack([x_real, x_imag], dim=1)
 
         out_wav = self.stft.inverse(feat)  # B, 1, T
         out_wav = torch.squeeze(out_wav, 1)

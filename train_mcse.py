@@ -467,7 +467,7 @@ if __name__ == "__main__":
 
     # net = DF_AIA_TRANS(in_channels=6, feature_size=257, mid_channels=96)  # C,F,C'
     net = dual_aia_trans_chime(
-        in_channels=6, feature_size=257, mid_channels=96
+        in_channels=6, feature_size=257, mid_channels=64
     )  # C,F,C'
     # net = MCNet(
     #     in_channels=6, ref_channel=5, sub_freqs=(3, 2), past_ahead=(5, 0)
