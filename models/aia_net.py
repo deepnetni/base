@@ -862,7 +862,7 @@ class AHAM(nn.Module):  # aham merge
         y_softmax = self.softmax(y_merge)  # B114_1
 
         # aham = torch.matmul(x_merge, y_softmax)  # B
-        aham = x_merge @ y_softmax
+        aham = x_merge @ y_softmax  # BCTF_4 x B114_1 => BCTF1
         aham = aham.view(batch, channel, frames, frequency)
         aham_output = input_list[-1] + aham
         return aham_output

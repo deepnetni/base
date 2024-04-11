@@ -1,6 +1,7 @@
 import einops
 import torch
 import torch.nn as nn
+from einops.layers.torch import Rearrange
 
 
 class MH_FTLSTM(nn.Module):
@@ -78,7 +79,7 @@ class MH_FTLSTM(nn.Module):
 
 
 class FTLSTM_RESNET(nn.Module):
-    """Input and output has the same dimension.
+    """Input and output has the same dimension. Operation along the C dim.
     Input:  B,C,T,F
     Return: B,C,T,F
 
@@ -154,6 +155,104 @@ class FTLSTM_RESNET(nn.Module):
         return inp
 
 
+class GroupATTBLK(nn.Module):
+    """
+    Input: B,C,T,F,depth
+    Output: B,C,T,F
+    """
+
+    def __init__(self, in_channels: int, feature_size: int, depth: int = 4, r=1):
+        super(GroupATTBLK, self).__init__()
+        self.depth = depth
+
+        self.layers = nn.ModuleList()
+        for _ in range(depth):
+            self.layers.append(
+                nn.Sequential(
+                    nn.AvgPool2d(
+                        kernel_size=(1, feature_size), stride=(1, feature_size)
+                    ),  # B,C,T,1
+                    nn.Conv2d(
+                        in_channels=in_channels,
+                        out_channels=in_channels // r,
+                        kernel_size=1,
+                        stride=1,
+                        padding=0,
+                        # groups=feature_size,
+                    ),  # b,t,f,1
+                    Rearrange("b c t f->b t f c"),
+                    nn.LayerNorm(in_channels),
+                    Rearrange("b t f c->b c t f"),  # f=1
+                    nn.PReLU(in_channels),
+                    nn.Conv2d(
+                        in_channels=in_channels // r,
+                        out_channels=in_channels,
+                        kernel_size=1,
+                        stride=1,
+                        padding=0,
+                    ),
+                )  # b,c,t,1
+            )
+
+    def forward(self, x):
+        d = x.size(-1)
+        out = []
+        for i in range(d):
+            xt = x[..., i]  # bctf
+            xt = self.layers[i](xt)  # bct1
+            out.append(xt)
+
+        mask = torch.stack(out, dim=-1).softmax(dim=-2)  # bct1d
+        mask = mask.permute(0, 1, 2, 4, 3)  # bctd1
+        x = x @ mask  # btcfd btcd1
+        return x
+
+
+class GroupFTLSTM(nn.Module):
+    """
+    input: B,C,T,F
+    output: B,C,T,F
+
+    Argus:
+      - in_channels: C dim
+      - feature_size: F dim
+    """
+
+    def __init__(
+        self,
+        in_channels: int,
+        feature_size: int,
+        hidden_size: int = 128,
+        depth=4,
+    ):
+        super().__init__()
+
+        self.layers = nn.ModuleList()
+        self.post = nn.ModuleList()
+        self.merge = GroupATTBLK(in_channels, feature_size, depth)
+        for _ in range(depth):
+            self.layers.append(
+                FTLSTM_RESNET(in_channels, hidden_size),
+            )
+            # self.post.append(
+            #     nn.Sequential(
+            #         nn.Conv2d(in_channels, in_channels, (1, 1)),
+            #         nn.PReLU(),
+            #     )
+            # )
+
+    def forward(self, x):
+        steps = []
+        for i, l in enumerate(self.layers):
+            x = l(x)  # B,C,T,F
+            # steps.append(self.post[i](x))
+            steps.append(x)
+
+        x = torch.stack(steps, dim=-1)  # B,C,T,F,D
+        x = self.merge(x).squeeze(-1)
+        return x
+
+
 class FTLSTM_RESNET_ATT(nn.Module):
     def __init__(self, input_size, hidden_size, batch_first=True, atten_wlen=10):
         """
@@ -226,3 +325,10 @@ class FTLSTM_RESNET_ATT(nn.Module):
         x += inp
 
         return x
+
+
+if __name__ == "__main__":
+    net = GroupFTLSTM(10, 65, 128, 4)
+    inp = torch.randn(1, 10, 20, 65)
+    out = net(inp)
+    print(out.shape)

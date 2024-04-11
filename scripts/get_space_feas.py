@@ -420,6 +420,7 @@ class FeatureComputerSpecific(nn.Module):
         array = self.array
         mixture = mixture[:, : array.n_mic]
         mix_stft = self.stft(mixture)  # [B, M, F, T]
+        # mix_stft = mixture.permute(0, 1, 3, 2)
         magnitude, phase = mix_stft.abs(), mix_stft.angle()
         feature_dict = {}
 
@@ -1050,4 +1051,6 @@ if __name__ == "__main__":
     x = torch.rand(1, 4, 16000)
     fc = FeatureComputerSpecific(loc_feature_conf)
     feature_dict = fc(x)
-    print("debug")
+    # print("debug", feature_dict)
+    for k, v in feature_dict.items():
+        print(k, v.shape)

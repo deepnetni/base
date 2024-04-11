@@ -55,7 +55,9 @@ class MultiFrameModule(nn.Module):
     need_unfold: Final[bool]
     real: Final[bool]
 
-    def __init__(self, num_freqs: int, frame_size: int, lookahead: int = 0, real: bool = False):
+    def __init__(
+        self, num_freqs: int, frame_size: int, lookahead: int = 0, real: bool = False
+    ):
         """Multi-Frame filtering module.
 
         Args:
@@ -69,9 +71,13 @@ class MultiFrameModule(nn.Module):
         self.frame_size = frame_size
         self.real = real
         if real:
-            self.pad = nn.ConstantPad3d((0, 0, 0, 0, frame_size - 1 - lookahead, lookahead), 0.0)
+            self.pad = nn.ConstantPad3d(
+                (0, 0, 0, 0, frame_size - 1 - lookahead, lookahead), 0.0
+            )
         else:
-            self.pad = nn.ConstantPad2d((0, 0, frame_size - 1 - lookahead, lookahead), 0.0)
+            self.pad = nn.ConstantPad2d(
+                (0, 0, frame_size - 1 - lookahead, lookahead), 0.0
+            )
         self.need_unfold = frame_size > 1
         self.lookahead = lookahead
 
@@ -158,21 +164,36 @@ def df_real(spec: Tensor, coefs: Tensor) -> Tensor:
 
 
 class DF(MultiFrameModule):
-    """Deep Filtering."""
+    """Deep Filtering.
+    Args:
+        num_freqs: F dim of fft.
+        frame_size: order
+    Inp: B,T,F,2; B,O,T,F,2
+    Out: B,T,F,2
+    """
 
     conj: Final[bool]
 
-    def __init__(self, num_freqs: int, frame_size: int, lookahead: int = 0, conj: bool = False):
+    def __init__(
+        self, num_freqs: int, frame_size: int, lookahead: int = 0, conj: bool = False
+    ):
         super().__init__(num_freqs, frame_size, lookahead)
         self.conj = conj
 
     def forward(self, spec: Tensor, coefs: Tensor):
-        spec_u = self.spec_unfold(torch.view_as_complex(spec))
-        coefs = torch.view_as_complex(coefs)
-        spec_f = spec_u.narrow(-2, 0, self.num_freqs)
+        """
+        spec: B,T,F,2
+        coefs: B,frame_size(O),T,F,2
+        """
+        spec_u = self.spec_unfold(torch.view_as_complex(spec))  # B,1,T,F,O(order)
+        spec_f = spec_u.narrow(-2, 0, self.num_freqs)  # B,C,T,F(num_freqs),O
+        coefs = torch.view_as_complex(coefs)  # B,O,T,F
+        # B, 1, O, T, F
         coefs = coefs.view(coefs.shape[0], -1, self.frame_size, *coefs.shape[2:])
         if self.conj:
             coefs = coefs.conj()
+        # spec_f: B,C,T,F,O
+        # coefs: B,1,O,T,F
         spec_f = df(spec_f, coefs)
         if self.training:
             spec = spec.clone()
@@ -185,7 +206,9 @@ class DFreal(MultiFrameModule):
 
     conj: Final[bool]
 
-    def __init__(self, num_freqs: int, frame_size: int, lookahead: int = 0, conj: bool = False):
+    def __init__(
+        self, num_freqs: int, frame_size: int, lookahead: int = 0, conj: bool = False
+    ):
         super().__init__(num_freqs, frame_size, lookahead, real=True)
         self.conj = conj
 
@@ -284,7 +307,9 @@ class MfWf(MultiFrameModule):
         """
 
         spec_u = self.spec_unfold(torch.view_as_complex(spec))
-        iRxx = torch.view_as_complex(iRxx.unflatten(3, (self.frame_size, self.frame_size, 2)))
+        iRxx = torch.view_as_complex(
+            iRxx.unflatten(3, (self.frame_size, self.frame_size, 2))
+        )
         if self.cholesky_decomp:
             if self.enforce_constraints:
                 # Upper triangular (wo. diagonal) must be zero
@@ -300,7 +325,9 @@ class MfWf(MultiFrameModule):
             iRxx[:, :, :, self.triu_idcs[0], self.triu_idcs[1]] = tril_conj
         ifc = torch.view_as_complex(ifc.unflatten(3, (self.frame_size, 2)))
         spec_f = spec_u.narrow(-2, 0, self.num_freqs)
-        if not self.inverse:  # Is already an inverse input. No need to inverse it again.
+        if (
+            not self.inverse
+        ):  # Is already an inverse input. No need to inverse it again.
             # Regularization on diag for stability
             iRxx = _tik_reg(iRxx, self.dload, self.eps)
             # Compute weights by solving the equation system
@@ -379,7 +406,9 @@ class MfMvdr(MultiFrameModule):
             spec (complex Tensor): Filtered spectrogram of shape [B, C, T, F]
         """
         spec_u = self.spec_unfold(torch.view_as_complex(spec))
-        iRnn = torch.view_as_complex(iRnn.unflatten(3, (self.frame_size, self.frame_size, 2)))
+        iRnn = torch.view_as_complex(
+            iRnn.unflatten(3, (self.frame_size, self.frame_size, 2))
+        )
         if self.cholesky_decomp:
             if self.enforce_constraints:
                 # Upper triangular (wo. diagonal) must be zero
@@ -395,7 +424,9 @@ class MfMvdr(MultiFrameModule):
             iRnn[:, :, :, self.triu_idcs[0], self.triu_idcs[1]] = tril_conj
         ifc = torch.view_as_complex(ifc.unflatten(3, (self.frame_size, 2)))
         spec_f = spec_u.narrow(-2, 0, self.num_freqs)
-        if not self.inverse:  # Is already an inverse input. No need to inverse it again.
+        if (
+            not self.inverse
+        ):  # Is already an inverse input. No need to inverse it again.
             # Regularization on diag for stability
             iRnn = _tik_reg(iRnn, self.dload, self.eps)
             # Compute weights by solving the equation system
@@ -405,7 +436,9 @@ class MfMvdr(MultiFrameModule):
         denumerator = torch.einsum("...n,...n->...", ifc.conj(), numerator)
         # Normalize numerator
         scale = ifc[..., -1, None].conj()
-        w = (numerator * scale / (denumerator.real.unsqueeze(-1) + self.eps)).unsqueeze(1)
+        w = (numerator * scale / (denumerator.real.unsqueeze(-1) + self.eps)).unsqueeze(
+            1
+        )
         spec_f = self.apply_coefs(spec_f, w)
         if self.training:
             spec = spec.clone()
@@ -414,7 +447,9 @@ class MfMvdr(MultiFrameModule):
 
 
 # From torchaudio
-def _compute_mat_trace(input: torch.Tensor, dim1: int = -2, dim2: int = -1) -> torch.Tensor:
+def _compute_mat_trace(
+    input: torch.Tensor, dim1: int = -2, dim2: int = -1
+) -> torch.Tensor:
     r"""Compute the trace of a Tensor along ``dim1`` and ``dim2`` dimensions.
     Args:
         input (torch.Tensor): Tensor of dimension `(..., channel, channel)`
@@ -459,7 +494,11 @@ def compute_corr(X: Tensor, N: int):
 
 
 def compute_ideal_wf(
-    rxx_via_rssrnn=True, cholesky_decomp=False, inverse=True, enforce_constraints=True, manual=False
+    rxx_via_rssrnn=True,
+    cholesky_decomp=False,
+    inverse=True,
+    enforce_constraints=True,
+    manual=False,
 ):
     from icecream import ic, install
 
@@ -488,12 +527,12 @@ def compute_ideal_wf(
     n_freqs = p.fft_size // 2 + 1
 
     df = libdf.DF(sr=p.sr, fft_size=p.fft_size, hop_size=p.hop_size, nb_bands=p.nb_erb)
-    s = load_audio("assets/clean_freesound_33711.wav", p.sr, num_frames=5 * p.sr)[0].mean(
-        0, keepdim=True
-    )
-    n = load_audio("assets/noise_freesound_2530.wav", p.sr, num_frames=5 * p.sr)[0].mean(
-        0, keepdim=True
-    )
+    s = load_audio("assets/clean_freesound_33711.wav", p.sr, num_frames=5 * p.sr)[
+        0
+    ].mean(0, keepdim=True)
+    n = load_audio("assets/noise_freesound_2530.wav", p.sr, num_frames=5 * p.sr)[
+        0
+    ].mean(0, keepdim=True)
     x = s + n
     save_audio("out/noisy.wav", x, p.sr)
 
@@ -520,7 +559,10 @@ def compute_ideal_wf(
         A = torch.linalg.inv(A)
     if cholesky_decomp:
         A, info = torch.linalg.cholesky_ex(A)
-        print("Number of errors during cholesky_decomp:", torch.where(info > 0, 1, 0).sum())
+        print(
+            "Number of errors during cholesky_decomp:",
+            torch.where(info > 0, 1, 0).sum(),
+        )
     ic(A.abs().mean())
     # Manual way
     if manual:
@@ -536,10 +578,14 @@ def compute_ideal_wf(
             ).squeeze(1)
         )
     y = df.synthesis(Y.numpy())
-    save_audio("out/ideal_mfwf_c{}_i{}.wav".format(int(cholesky_decomp), int(inverse)), y, p.sr)
+    save_audio(
+        "out/ideal_mfwf_c{}_i{}.wav".format(int(cholesky_decomp), int(inverse)), y, p.sr
+    )
 
 
-def compute_ideal_mvdr(cholesky_decomp=False, inverse=True, enforce_constraints=True, manual=False):
+def compute_ideal_mvdr(
+    cholesky_decomp=False, inverse=True, enforce_constraints=True, manual=False
+):
     from icecream import ic, install
 
     import libdf
@@ -567,12 +613,12 @@ def compute_ideal_mvdr(cholesky_decomp=False, inverse=True, enforce_constraints=
     n_freqs = p.fft_size // 2 + 1
 
     df = libdf.DF(sr=p.sr, fft_size=p.fft_size, hop_size=p.hop_size, nb_bands=p.nb_erb)
-    s = load_audio("assets/clean_freesound_33711.wav", p.sr, num_frames=5 * p.sr)[0].mean(
-        0, keepdim=True
-    )
-    n = load_audio("assets/noise_freesound_2530.wav", p.sr, num_frames=5 * p.sr)[0].mean(
-        0, keepdim=True
-    )
+    s = load_audio("assets/clean_freesound_33711.wav", p.sr, num_frames=5 * p.sr)[
+        0
+    ].mean(0, keepdim=True)
+    n = load_audio("assets/noise_freesound_2530.wav", p.sr, num_frames=5 * p.sr)[
+        0
+    ].mean(0, keepdim=True)
     x = s + n
     save_audio("out/noisy.wav", x, p.sr)
 
@@ -600,7 +646,10 @@ def compute_ideal_mvdr(cholesky_decomp=False, inverse=True, enforce_constraints=
         A = torch.linalg.inv(A)
     if cholesky_decomp:
         A, info = torch.linalg.cholesky_ex(A)
-        print("Number of errors during cholesky_decomp:", torch.where(info > 0, 1, 0).sum())
+        print(
+            "Number of errors during cholesky_decomp:",
+            torch.where(info > 0, 1, 0).sum(),
+        )
     ic(A.abs().mean())
     # Manual way
     if manual:
@@ -625,7 +674,11 @@ def compute_ideal_mvdr(cholesky_decomp=False, inverse=True, enforce_constraints=
             ).squeeze(1)
         )
     y = df.synthesis(Y.numpy())
-    save_audio("out/ideal_mfmvdr_c{}_i{}.wav".format(int(cholesky_decomp), int(inverse)), y, p.sr)
+    save_audio(
+        "out/ideal_mfmvdr_c{}_i{}.wav".format(int(cholesky_decomp), int(inverse)),
+        y,
+        p.sr,
+    )
 
 
 def compute_all_mf(enforce_constraints=True):

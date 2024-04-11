@@ -169,7 +169,8 @@ class Engine(object):
     ) -> np.ndarray:
         if isinstance(sph, torch.Tensor):
             sph = sph.cpu().detach().numpy()
-            enh = sph.cpu().detach().numpy()
+        if isinstance(enh, torch.Tensor):
+            enh = enh.cpu().detach().numpy()
 
         scores = np.array(
             Parallel(n_jobs=njobs)(

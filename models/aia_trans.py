@@ -19,6 +19,7 @@ from models.aia_net import (
 from models.multiframe import DF
 from models.conv_stft import STFT
 from thop import profile
+from models.multiframe import DF
 
 
 class simam_module(torch.nn.Module):

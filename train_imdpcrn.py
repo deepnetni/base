@@ -20,7 +20,14 @@ from typing import Dict, Optional, Union, List
 from models.APC_SNR.apc_snr import APC_SNR_multi_filter
 from models.conv_stft import STFT
 from models.dpcrn_refinement import DPCRN_REFINEMENT
-from models.IMDPCRN import BaseCRN, BaseCRNwSubBands
+from models.IMDPCRN import (
+    CRN_AEC,
+    BaseCRN,
+    BaseCRNwSubBands,
+    DFCRN,
+    BaseCRNwGroupFT,
+    CRN_AEC_2,
+)
 
 # from models.pase.models.frontend import wf_builder
 import argparse
@@ -57,6 +64,7 @@ class Train(Engine):
             generator=self._set_generator(),
             # generator=g,
         )
+        self.valid_dset = valid_dset
 
         self.draw_epoch = kwargs.get("draws_per_valid_int", 0)
 
@@ -94,12 +102,42 @@ class Train(Engine):
         #     "./pretrained/pase_e199.ckpt", load_last=True, verbose=True
         # )
         # self.pase.to("cuda")
+        self.raw_metrics = self._load_dsets_metrics()
 
     @staticmethod
     def _config_optimizer(name: str, params, **kwargs):
         return super(Train, Train)._config_optimizer(
             name, filter(lambda p: p.requires_grad, params, **kwargs)
         )
+
+    def _valid_dsets(self):
+        dset_dict = {}
+        # -----------------------#
+        ##### valid dataset  #####
+        # -----------------------#
+        metric_rec = REC()
+        pbar = tqdm(
+            self.valid_loader,
+            ncols=120,
+            leave=False,
+            desc=f"v-{self.valid_dset.dirname}",
+        )
+
+        for mic, ref, sph, scenario in pbar:
+            mic = mic.to(self.device)  # b,c,t,f
+            ref = ref.to(self.device)  # b,c,t,f
+            sph = sph.to(self.device)  # b,c,t,f
+            sce = scenario.to(self.device)  # b,1
+
+            metric_dict = self.valid_fn(sph, mic, sce, return_loss=False)
+            metric_dict.pop("score")
+            # record the loss
+            metric_rec.update(metric_dict)
+            pbar.set_postfix(**metric_rec.state_dict())
+
+        dset_dict["valid"] = metric_rec.state_dict()
+
+        return dset_dict
 
     def loss_fn(self, clean: Tensor, enh: Tensor) -> Dict:
         # apc loss
@@ -173,7 +211,9 @@ class Train(Engine):
 
         return losses_rec.state_dict()
 
-    def valid_fn(self, sph: Tensor, enh: Tensor, scenario: Tensor) -> Dict:
+    def valid_fn(
+        self, sph: Tensor, enh: Tensor, scenario: Tensor, return_loss: bool = True
+    ) -> Dict:
         sisnr = self._si_snr(sph, enh)
         sisnr = np.mean(sisnr)
 
@@ -199,10 +239,13 @@ class Train(Engine):
 
         state = {"score": score, "pesq": pesq, "stoi": stoi, "sisnr": sisnr}
 
-        loss_dict = self.loss_fn(sph, enh)
+        if return_loss:
+            loss_dict = self.loss_fn(sph, enh)
 
-        # return dict(state, **composite)
-        return dict(state, **loss_dict)
+            # return dict(state, **composite)
+            return dict(state, **loss_dict)
+        else:
+            return state
 
     def _valid_each_epoch(self, epoch):
         metric_rec = REC()
@@ -241,7 +284,14 @@ class Train(Engine):
             metric_rec.update(metric_dict)
             pbar.set_postfix(**metric_rec.state_dict())
 
-        return metric_rec.state_dict()
+        out = {}
+        for k, v in metric_rec.state_dict().items():
+            if k in self.raw_metrics["valid"]:
+                out[k] = {"enh": v, "raw": self.raw_metrics["valid"][k]}
+            else:
+                out[k] = v
+        # return metric_rec.state_dict()
+        return out
 
     def vtest_fn(self, sph: Tensor, enh: Tensor) -> Dict:
         sisnr = self._si_snr(sph, enh)
@@ -347,7 +397,19 @@ def parse():
         "--test", help="fusion with the atten method", action="store_true"
     )
     parser.add_argument(
+        "--crn", help="fusion with the atten method", action="store_true"
+    )
+    parser.add_argument(
+        "--crn-2", help="fusion with the atten method", action="store_true"
+    )
+    parser.add_argument(
         "--wsub", help="fusion with the atten method", action="store_true"
+    )
+    parser.add_argument(
+        "--wdf", help="fusion with the atten method", action="store_true"
+    )
+    parser.add_argument(
+        "--wgroup", help="fusion with the atten method", action="store_true"
     )
     parser.add_argument(
         "--wfusion-att", help="fusion with the atten method", action="store_true"
@@ -377,10 +439,40 @@ if __name__ == "__main__":
         cfg_fname = "config/config_imdpcrn_base.ini"
         cfg = read_ini(cfg_fname)
         net = BaseCRN(64)
+    elif args.crn:  # 31
+        cfg_fname = "config/config_imdpcrn_crn.ini"
+        cfg = read_ini(cfg_fname)
+        net = CRN_AEC(
+            nframe=512,
+            nhop=256,
+            nfft=512,
+            cnn_num=[32, 64, 128, 128],
+            stride=[2, 2, 1, 1],
+            rnn_hidden_num=128,
+        )
+    elif args.crn_2:  # 31
+        cfg_fname = "config/config_imdpcrn_crn_2.ini"
+        cfg = read_ini(cfg_fname)
+        net = CRN_AEC_2(
+            nframe=512,
+            nhop=256,
+            nfft=512,
+            cnn_num=[32, 64, 128, 128],
+            stride=[2, 2, 1, 1],
+            rnn_hidden_num=128,
+        )
     elif args.wsub:  # 31
         cfg_fname = "config/config_imdpcrn_sub.ini"
         cfg = read_ini(cfg_fname)
-        net = BaseCRNwSubBands(64, sub=(3, 5))
+        net = BaseCRNwSubBands(64, sub=(3, 4))
+    elif args.wdf:  # 31
+        cfg_fname = "config/config_imdpcrn_df.ini"
+        cfg = read_ini(cfg_fname)
+        net = DFCRN(64)
+    elif args.wgroup:  # 31
+        cfg_fname = "config/config_imdpcrn_group.ini"
+        cfg = read_ini(cfg_fname)
+        net = BaseCRNwGroupFT(64)
     else:  # 212  baseline
         cfg_fname = "config/config_adpcrn.ini"
         cfg = read_ini(cfg_fname)
