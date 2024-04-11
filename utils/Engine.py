@@ -228,6 +228,14 @@ class Engine(object):
         np.random.seed(worker_id)
         random.seed(worker_id)
 
+    @staticmethod
+    def _set_generator(seed: int = 0) -> torch.Generator:
+        # make sure the dataloader return the same series under different PCs
+        # torch.manual_seed(seed if seed is not None else self.seed)
+        g = torch.Generator()
+        g.manual_seed(seed)
+        return g
+
     def _load_dsets_metrics(self, fname: Optional[Path] = None) -> Dict:
         """load dataset metrics provided by `self._valid_dsets`"""
         metrics = {}
@@ -242,13 +250,6 @@ class Engine(object):
                 json.dump(metrics, fp, indent=2)
 
         return metrics
-
-    def _set_generator(self, seed: int = 0) -> torch.Generator:
-        # make sure the dataloader return the same series under different PCs
-        # torch.manual_seed(seed if seed is not None else self.seed)
-        g = torch.Generator()
-        g.manual_seed(seed)
-        return g
 
     def _draw_spectrogram(self, epoch, *args, **kwargs):
         """
@@ -347,6 +348,12 @@ class Engine(object):
         self.optimizer.load_state_dict(ckpt["optimizer"])
         self.scheduler.load_state_dict(ckpt["scheduler"])
         self.net.load_state_dict(ckpt["net"])
+
+    def _save_dnet(self, epoch):
+        pass
+
+    def _load_dnet(self):
+        pass
 
     def _print(self, tag: str, state_dict: Dict, epoch: int):
         """

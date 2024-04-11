@@ -8,10 +8,10 @@ from scipy.signal import get_window
 
 
 class STFT(nn.Module):
-    """
-    return
-    ------
-    B,2,T,F
+    """Compute FFT based on given nframe, nhop;
+    the nFFT is an exponential multiple of 2 if not given.
+
+    return: B,2,T,F
     """
 
     def __init__(
