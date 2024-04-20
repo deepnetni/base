@@ -9,3 +9,5 @@ if __name__ == "__main__":
     inp = torch.randn(2, 1, 16000).cuda()
     out = pase(inp)
     print(out.shape)
+    out = out.flatten(1)
+    print(out.shape)

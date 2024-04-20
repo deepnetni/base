@@ -6,6 +6,7 @@ from einops import rearrange
 import numpy as np
 import pesq
 import torch
+import torch.nn.functional as F
 
 # from matplotlib import pyplot as plt
 import shutil
@@ -32,6 +33,7 @@ from torchmetrics.functional.audio import (
     scale_invariant_signal_distortion_ratio as si_sdr,
 )
 from models.APC_SNR.apc_snr import APC_SNR_multi_filter
+from models.pase.models.frontend import wf_builder
 
 
 class Train(Engine):
@@ -105,6 +107,11 @@ class Train(Engine):
 
         self.raw_metrics = self._load_dsets_metrics(self.dsets_mfile)
 
+        self.pase = wf_builder("config/frontend/PASE+.cfg").eval()
+        self.pase.load_pretrained(
+            "./pretrained/pase_e199.ckpt", load_last=True, verbose=True
+        )
+
         # self.APC_criterion = APC_SNR_multi_filter(
         #     model_hop=128,
         #     model_winlen=512,
@@ -134,7 +141,7 @@ class Train(Engine):
         # sisdr_lv = loss_sisnr(clean, enh)
         specs_enh = self.stft.transform(enh)
         specs_sph = self.stft.transform(clean)
-        pmsqe_score = loss_pmsqe(specs_sph, specs_enh)
+        pmsqe_score = 0.3 * loss_pmsqe(specs_sph, specs_enh)
         # mse_mag, mse_pha = loss_compressed_mag(specs_sph, specs_enh)
         # loss = 0.05 * sisnr_lv + mse_pha + mse_mag + pmsq_score
         # return {
@@ -146,7 +153,6 @@ class Train(Engine):
         # }
         # sdr_lv = -SDR(preds=enh, target=clean).mean()
         sc_loss, mag_loss = self.ms_stft_loss(enh, clean)
-        loss = sc_loss + mag_loss + 0.3 * pmsqe_score  # + 0.05 * sdr_lv
         # else:
         #     cln_ = clean[0, : nlen[0]]  # B,T
         #     enh_ = enh[0, : nlen[0]]
@@ -159,22 +165,25 @@ class Train(Engine):
         #         mag_loss = mag_loss + mag_
         #     loss = (sc_loss + mag_loss) / len(nlen)  # + 0.05 * pmsqe_score
 
+        # pase loss
+        clean = clean.unsqueeze(1)  # B,1,T
+        enh = enh.unsqueeze(1)  # B,1,T
+        clean_pase = self.pase(clean)
+        clean_pase = clean_pase.flatten(1)
+        enh_pase = self.pase(enh)
+        enh_pase = enh_pase.flatten(1)
+        loss_pase = F.mse_loss(clean_pase, enh_pase)
+
+        loss = sc_loss + mag_loss + pmsqe_score + loss_pase  # + 0.05 * sdr_lv
+
         return {
             "loss": loss,
             "sc": sc_loss.detach(),
             "mag": mag_loss.detach(),
-            "pmsqe": 0.3 * pmsqe_score.detach(),
+            "pmsqe": pmsqe_score.detach(),
+            "pase": loss_pase.detach(),
             # "sdr": 0.05 * sdr_lv.detach(),
         }
-
-        # pase loss
-        # clean = clean.unsqueeze(1)
-        # enh = enh.unsqueeze(1)
-        # clean_pase = self.pase(clean)
-        # clean_pase = clean_pase.flatten(1)
-        # enh_pase = self.pase(enh)
-        # enh_pase = enh_pase.flatten(1)
-        # loss_pase = F.mse_loss(clean_pase, enh_pase)
 
     def _fit_each_epoch(self, epoch):
         losses_rec = REC()

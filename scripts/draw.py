@@ -41,6 +41,8 @@ def draw_file(fname: str):
 
     fname, suffix = os.path.splitext(fname)
     fname = fname + ".svg"
+    _, fname = os.path.split(fname)
+    print(f"out:{fname}")
     plt.imshow(spec, origin="lower", aspect="auto", cmap="jet")
     # plt.specgram(data, Fs=fs, cmap="jet")
     # plt.show()

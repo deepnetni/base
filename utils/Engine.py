@@ -398,7 +398,7 @@ class Engine(object):
                     self.writer.add_text(f"Test-{name}", out, i)
                     self._print(f"Test-{name}", score, i)
 
-    def test(self, name: str, epoch: Optional[int] = None):
+    def test(self, epoch: Optional[int] = None):
         if epoch is None:
             epoch = (
                 self.start_epoch - 1 if self.valid_first is False else self.start_epoch

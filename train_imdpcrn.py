@@ -23,8 +23,11 @@ from models.dpcrn_refinement import DPCRN_REFINEMENT
 from models.IMDPCRN import (
     CRN_AEC,
     BaseCRN,
+    BaseCRN_2,
+    BaseCRNDensePWC,
     BaseCRNwSubBands,
     DFCRN,
+    DFCRN_pwc,
     BaseCRNwGroupFT,
     CRN_AEC_2,
 )
@@ -393,6 +396,8 @@ class Train(Engine):
 def parse():
     parser = argparse.ArgumentParser()
     parser.add_argument("--base", help="crn aec model", action="store_true")
+    parser.add_argument("--base-2", help="crn aec model", action="store_true")
+    parser.add_argument("--base-pwc", help="crn aec model", action="store_true")
     parser.add_argument(
         "--test", help="fusion with the atten method", action="store_true"
     )
@@ -407,6 +412,9 @@ def parse():
     )
     parser.add_argument(
         "--wdf", help="fusion with the atten method", action="store_true"
+    )
+    parser.add_argument(
+        "--wdf-pwc", help="fusion with the atten method", action="store_true"
     )
     parser.add_argument(
         "--wgroup", help="fusion with the atten method", action="store_true"
@@ -439,6 +447,14 @@ if __name__ == "__main__":
         cfg_fname = "config/config_imdpcrn_base.ini"
         cfg = read_ini(cfg_fname)
         net = BaseCRN(64)
+    elif args.base_pwc:  # 31
+        cfg_fname = "config/config_imdpcrn_base_pwc.ini"
+        cfg = read_ini(cfg_fname)
+        net = BaseCRNDensePWC(64)
+    elif args.base_2:  # 31
+        cfg_fname = "config/config_imdpcrn_base_2.ini"
+        cfg = read_ini(cfg_fname)
+        net = BaseCRN_2(64)
     elif args.crn:  # 31
         cfg_fname = "config/config_imdpcrn_crn.ini"
         cfg = read_ini(cfg_fname)
@@ -469,6 +485,10 @@ if __name__ == "__main__":
         cfg_fname = "config/config_imdpcrn_df.ini"
         cfg = read_ini(cfg_fname)
         net = DFCRN(64)
+    elif args.wdf_pwc:  # 31
+        cfg_fname = "config/config_imdpcrn_df_pwc.ini"
+        cfg = read_ini(cfg_fname)
+        net = DFCRN_pwc(64)
     elif args.wgroup:  # 31
         cfg_fname = "config/config_imdpcrn_group.ini"
         cfg = read_ini(cfg_fname)
@@ -477,7 +497,7 @@ if __name__ == "__main__":
         cfg_fname = "config/config_adpcrn.ini"
         cfg = read_ini(cfg_fname)
 
-    print("##", cfg_fname)
+    print("\033[35m" + cfg_fname + "\033[0m")
 
     vtests = list(
         map(lambda x: x.strip("\n"), cfg["dataset"]["vtest_dset"].strip(",").split(","))
@@ -516,6 +536,6 @@ if __name__ == "__main__":
     )
     print(eng)
     if args.test:
-        eng.test(os.path.split(cfg["dataset"]["vtest_dset"])[-1])
+        eng.test()
     else:
         eng.fit()

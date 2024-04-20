@@ -143,15 +143,15 @@ class DenseNetRes(nn.Module):
         super(DenseNetRes, self).__init__()
         self.f_unit = nn.Sequential(
             Rearrange("b c t f->b c f t"),
-            DenseNet(depth, in_channels, (3, 3), (False, False)),
+            DenseNet(depth, in_channels, (3, 3), (False, True)),
             Rearrange("b c f t->b c t f"),
         )
         # self.f_post = nn.Sequential()
         self.t_unit = nn.Sequential(DenseNet(depth, in_channels, (3, 3), (True, False)))
 
     def forward(self, x):
-        x = x + self.f_unit(x)
-        x = x + self.t_unit(x)
+        x = self.f_unit(x)
+        x = self.t_unit(x)
         return x
 
 
@@ -257,6 +257,62 @@ class dense_encoder(nn.Module):
         return x
 
 
+class dense_encoder_2(nn.Module):
+    """
+    Input: B,C,T,F
+
+    Arugments:
+      - in_chanels: C of input;
+      - feature_size: F of input
+    """
+
+    def __init__(
+        self, in_channels: int, feature_size: int, out_channels, depth: int = 4
+    ):
+        super(dense_encoder_2, self).__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+
+        self.pre_layers = nn.Sequential(
+            nn.Conv2d(
+                in_channels=in_channels,
+                out_channels=out_channels,
+                kernel_size=(1, 1),
+            ),  # [b, 64, nframes, 512]
+            nn.LayerNorm(feature_size),
+            nn.PReLU(out_channels),
+        )
+        self.enc_dense = DenseNetRes(depth, out_channels)
+
+        self.post_conv = nn.Sequential(
+            nn.Conv2d(
+                in_channels=out_channels,
+                out_channels=out_channels,
+                kernel_size=(1, 3),
+                stride=(1, 2),  # //2
+                padding=(0, 1),
+            ),
+            nn.LayerNorm(feature_size // 2 + 1),
+            nn.PReLU(out_channels),
+            nn.Conv2d(
+                in_channels=out_channels,
+                out_channels=out_channels,
+                kernel_size=(1, 3),
+                stride=(1, 2),
+                padding=(0, 1),
+            ),
+            nn.LayerNorm(feature_size // 4 + 1),
+            nn.PReLU(out_channels),
+        )
+
+    def forward(self, x):
+        x = self.pre_layers(x)
+        x = self.enc_dense(x)
+        x = self.post_conv(x)
+
+        return x
+
+
 class dense_pwc_encoder(nn.Module):
     """
     Input: B,C,T,F
@@ -315,6 +371,66 @@ class dense_pwc_encoder(nn.Module):
         return x
 
 
+class dense_pwc_decoder(nn.Module):
+    def __init__(
+        self, in_channels: int, out_channels: int, feature_size: int, depth: int = 4
+    ):
+        super().__init__()
+        self.out_channels = 1
+        self.in_channels = in_channels
+        # self.dec_dense = DenseBlock(
+        #     depth=depth, in_channels=in_channels, input_size=feature_size
+        # )
+        self.dec_dense = DensePWConvBlock(
+            depth=depth, in_channels=in_channels, input_size=feature_size
+        )
+
+        self.dec_conv1 = nn.Sequential(
+            SPConvTranspose2d(
+                in_channels=in_channels,
+                out_channels=in_channels,
+                kernel_size=(1, 3),
+                r=2,
+            ),
+            nn.LayerNorm(feature_size * 2),
+            nn.PReLU(in_channels),
+            nn.Conv2d(in_channels, in_channels, (1, 2)),
+            nn.LayerNorm(feature_size * 2 - 1),
+            nn.PReLU(in_channels),
+        )
+
+        feature_size = feature_size * 2 - 1
+
+        self.dec_conv2 = nn.Sequential(
+            SPConvTranspose2d(
+                in_channels=in_channels,
+                out_channels=in_channels,
+                kernel_size=(1, 3),
+                r=2,
+            ),
+            nn.LayerNorm(feature_size * 2),
+            nn.PReLU(in_channels),
+            nn.Conv2d(in_channels, in_channels, (1, 2)),
+            nn.LayerNorm(feature_size * 2 - 1),
+            nn.PReLU(in_channels),
+        )
+        #
+        self.out_conv = nn.Conv2d(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            kernel_size=(1, 5),
+            padding=(0, 2),
+        )
+
+    def forward(self, x):
+        out = self.dec_dense(x)
+        out = self.dec_conv1(out)
+
+        out = self.dec_conv2(out)
+        out = self.out_conv(out)
+        return out
+
+
 class SPConvTranspose2d(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size: Tuple = (1, 3), r=1):
         super(SPConvTranspose2d, self).__init__()
@@ -334,6 +450,61 @@ class SPConvTranspose2d(nn.Module):
         # out = out.view((batch_size, self.r, nchannels // self.r, H, W))
         # out = out.permute(0, 2, 3, 4, 1)  # b,nc/r,h,w,r
         # out = out.contiguous().view((batch_size, nchannels // self.r, H, -1))
+        return out
+
+
+class dense_decoder_2(nn.Module):
+    def __init__(
+        self, in_channels: int, out_channels: int, feature_size: int, depth: int = 4
+    ):
+        super().__init__()
+        self.out_channels = 1
+        self.in_channels = in_channels
+        self.dec_dense = DenseNetRes(depth, in_channels)
+
+        self.dec_conv1 = nn.Sequential(
+            SPConvTranspose2d(
+                in_channels=in_channels,
+                out_channels=in_channels,
+                kernel_size=(1, 3),
+                r=2,
+            ),
+            nn.LayerNorm(feature_size * 2),
+            nn.PReLU(in_channels),
+            nn.Conv2d(in_channels, in_channels, (1, 2)),
+            nn.LayerNorm(feature_size * 2 - 1),
+            nn.PReLU(in_channels),
+        )
+
+        feature_size = feature_size * 2 - 1
+
+        self.dec_conv2 = nn.Sequential(
+            SPConvTranspose2d(
+                in_channels=in_channels,
+                out_channels=in_channels,
+                kernel_size=(1, 3),
+                r=2,
+            ),
+            nn.LayerNorm(feature_size * 2),
+            nn.PReLU(in_channels),
+            nn.Conv2d(in_channels, in_channels, (1, 2)),
+            nn.LayerNorm(feature_size * 2 - 1),
+            nn.PReLU(in_channels),
+        )
+        #
+        self.out_conv = nn.Conv2d(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            kernel_size=(1, 5),
+            padding=(0, 2),
+        )
+
+    def forward(self, x):
+        out = self.dec_dense(x)
+        out = self.dec_conv1(out)
+
+        out = self.dec_conv2(out)
+        out = self.out_conv(out)
         return out
 
 
@@ -605,11 +776,11 @@ class CRN_AEC_2(nn.Module):
                 )
 
         self.rnns_r = nn.Sequential(
-            FTLSTM_DENSE(cnn_num[-1], rnn_hidden_num),
-            FTLSTM_DENSE(cnn_num[-1], rnn_hidden_num),
+            # FTLSTM_DENSE(cnn_num[-1], rnn_hidden_num),
+            # FTLSTM_DENSE(cnn_num[-1], rnn_hidden_num),
             # FTLSTM_RESNET(cnn_num[-1], rnn_hidden_num),
-            # DenseNetRes(4, cnn_num[-1]),
-            # DenseNetRes(4, cnn_num[-1]),
+            DenseNetRes(4, cnn_num[-1]),
+            DenseNetRes(4, cnn_num[-1]),
         )
         # self.rnns_i = nn.Sequential(
         #     FTLSTM_RESNET(cnn_num[-1], rnn_hidden_num),
@@ -815,6 +986,137 @@ class CRN_AEC(nn.Module):
         return out_wav
 
 
+class BaseCRN_2(nn.Module):
+    def __init__(self, mid_channels: int = 128):
+        super().__init__()
+        self.stft = STFT(512, 256)
+        self.encode_spec = dense_encoder_2(
+            in_channels=4, feature_size=257, out_channels=mid_channels, depth=4
+        )
+        self.de_r = dense_decoder_2(
+            in_channels=mid_channels,
+            out_channels=1,
+            feature_size=65,  # 257//4+1
+            depth=4,
+        )
+        self.de_i = dense_decoder_2(
+            in_channels=mid_channels,
+            out_channels=1,
+            feature_size=65,
+            depth=4,
+        )
+
+        self.rnns_r = nn.Sequential(
+            FTLSTM_RESNET(mid_channels, 128),
+            FTLSTM_RESNET(mid_channels, 128),
+            # DenseNetRes(4, mid_channels),
+        )
+        self.rnns_i = nn.Sequential(
+            FTLSTM_RESNET(mid_channels, 128),
+            FTLSTM_RESNET(mid_channels, 128),
+            # DenseNetRes(4, mid_channels),
+        )
+
+    def forward(self, mic, ref):
+        xk_m = self.stft.transform(mic)  # b,2,t,f
+        xk_r = self.stft.transform(ref)
+
+        xk_m_r, xk_m_i = xk_m.chunk(2, dim=1)
+        xk_r_r, xk_r_i = xk_r.chunk(2, dim=1)
+
+        xk = torch.concat([xk_m_r, xk_r_r, xk_m_i, xk_r_i], dim=1)
+        xk = self.encode_spec(xk)  # b,4,t,f
+
+        # xk_r, xk_i = xk.chunk(2, dim=1)
+        xk_r = self.rnns_r(xk)
+        xk_i = self.rnns_i(xk)
+
+        mask_r = self.de_r(xk_r)
+        mask_i = self.de_i(xk_i)
+
+        xk_r = xk_m_r * mask_r - xk_m_i * mask_i
+        xk_i = xk_m_r * mask_i + xk_m_i * mask_r
+
+        xk = torch.concat([xk_r, xk_i], dim=1)
+
+        out = self.stft.inverse(xk)
+
+        return out
+
+
+class BaseCRNDensePWC(nn.Module):
+    def __init__(self, mid_channels: int = 128):
+        super().__init__()
+        self.stft = STFT(512, 256)
+        # self.encode_spec = dense_encoder(
+        #     in_channels=4, feature_size=257, out_channels=mid_channels, depth=4
+        # )
+        # self.de_r = dense_decoder(
+        #     in_channels=mid_channels,
+        #     out_channels=1,
+        #     feature_size=65,  # 257//4+1
+        #     depth=4,
+        # )
+        # self.de_i = dense_decoder(
+        #     in_channels=mid_channels,
+        #     out_channels=1,
+        #     feature_size=65,
+        #     depth=4,
+        # )
+        self.encode_spec = dense_pwc_encoder(
+            in_channels=4, feature_size=257, out_channels=mid_channels, depth=4
+        )
+        self.de_r = dense_pwc_decoder(
+            in_channels=mid_channels,
+            out_channels=1,
+            feature_size=65,  # 257//4+1
+            depth=4,
+        )
+        self.de_i = dense_pwc_decoder(
+            in_channels=mid_channels,
+            out_channels=1,
+            feature_size=65,
+            depth=4,
+        )
+
+        self.rnns_r = nn.Sequential(
+            FTLSTM_RESNET(mid_channels, 128),
+            FTLSTM_RESNET(mid_channels, 128),
+            # DenseNetRes(4, mid_channels),
+        )
+        self.rnns_i = nn.Sequential(
+            FTLSTM_RESNET(mid_channels, 128),
+            FTLSTM_RESNET(mid_channels, 128),
+            # DenseNetRes(4, mid_channels),
+        )
+
+    def forward(self, mic, ref):
+        xk_m = self.stft.transform(mic)  # b,2,t,f
+        xk_r = self.stft.transform(ref)
+
+        xk_m_r, xk_m_i = xk_m.chunk(2, dim=1)
+        xk_r_r, xk_r_i = xk_r.chunk(2, dim=1)
+
+        xk = torch.concat([xk_m_r, xk_r_r, xk_m_i, xk_r_i], dim=1)
+        xk = self.encode_spec(xk)  # b,4,t,f
+
+        # xk_r, xk_i = xk.chunk(2, dim=1)
+        xk_r = self.rnns_r(xk)
+        xk_i = self.rnns_i(xk)
+
+        mask_r = self.de_r(xk_r)
+        mask_i = self.de_i(xk_i)
+
+        xk_r = xk_m_r * mask_r - xk_m_i * mask_i
+        xk_i = xk_m_r * mask_i + xk_m_i * mask_r
+
+        xk = torch.concat([xk_r, xk_i], dim=1)
+
+        out = self.stft.inverse(xk)
+
+        return out
+
+
 class BaseCRN(nn.Module):
     def __init__(self, mid_channels: int = 128):
         super().__init__()
@@ -822,9 +1124,6 @@ class BaseCRN(nn.Module):
         self.encode_spec = dense_encoder(
             in_channels=4, feature_size=257, out_channels=mid_channels, depth=4
         )
-        # self.encode_spec = dense_pwc_encoder(
-        #     in_channels=4, feature_size=257, out_channels=mid_channels, depth=4
-        # )
         self.de_r = dense_decoder(
             in_channels=mid_channels,
             out_channels=1,
@@ -949,6 +1248,92 @@ class BaseCRNwGroupFT(nn.Module):
 #         coefs = coefs.view(new_shape)
 #         coefs = coefs.permute(0, 3, 1, 2, 4)
 #         return coefs
+
+
+class DFCRN_pwc(nn.Module):
+    def __init__(self, mid_channels: int = 128):
+        super().__init__()
+        self.stft = STFT(512, 256)
+        # self.encode_spec = dense_encoder(
+        #     in_channels=4,
+        #     out_channels=mid_channels,
+        #     depth=4,
+        #     feature_size=257,
+        # )
+        self.encode_spec = dense_pwc_encoder(
+            in_channels=4, feature_size=257, out_channels=mid_channels, depth=4
+        )
+        self.de_r = dense_pwc_decoder(
+            in_channels=mid_channels,
+            out_channels=1,
+            feature_size=65,  # 257//4+1
+            depth=4,
+        )
+        self.de_i = dense_pwc_decoder(
+            in_channels=mid_channels,
+            out_channels=1,
+            feature_size=65,
+            depth=4,
+        )
+
+        df_bins = 257
+        df_order = 5
+        self.df_op = DF(num_freqs=df_bins, frame_size=5, lookahead=0)
+
+        self.de_df = nn.Sequential(
+            dense_decoder(
+                in_channels=mid_channels * 2,
+                out_channels=df_order * 2,
+                feature_size=65,
+                depth=4,
+            ),
+            Rearrange("b (m c) t f-> b c t f m", m=2),
+        )
+
+        self.rnns_r = nn.Sequential(
+            FTLSTM_RESNET(mid_channels, 128),
+            FTLSTM_RESNET(mid_channels, 128),
+        )
+        self.rnns_i = nn.Sequential(
+            FTLSTM_RESNET(mid_channels, 128),
+            FTLSTM_RESNET(mid_channels, 128),
+        )
+
+    def forward(self, mic, ref):
+        xk_m = self.stft.transform(mic)  # b,2,t,f
+        xk_r = self.stft.transform(ref)
+
+        xk_m_r, xk_m_i = xk_m.chunk(2, dim=1)
+        xk_r_r, xk_r_i = xk_r.chunk(2, dim=1)
+
+        xk = torch.concat([xk_m_r, xk_r_r, xk_m_i, xk_r_i], dim=1)
+        xk = self.encode_spec(xk)  # b,4,t,f
+
+        # xk_r, xk_i = xk.chunk(2, dim=1)
+        xk_r = self.rnns_r(xk)
+        xk_i = self.rnns_i(xk)
+        xk = torch.concat([xk_r, xk_i], dim=1)
+
+        mask_r = self.de_r(xk_r)
+        mask_i = self.de_i(xk_i)
+        mask_df = self.de_df(xk).contiguous()  # b,df_order,t,f,2
+
+        xk_r = xk_m_r * mask_r - xk_m_i * mask_i
+        xk_i = xk_m_r * mask_i + xk_m_i * mask_r
+
+        xk = (
+            torch.concat([xk_r, xk_i], dim=1)
+            .permute(0, 2, 3, 1)
+            .unsqueeze(1)
+            .contiguous()
+        )  # B,1,T,F,C
+
+        xk = self.df_op(xk, mask_df).squeeze(1)  # b,t,f,c
+        xk = xk.permute(0, 3, 1, 2)
+
+        out = self.stft.inverse(xk)
+
+        return out
 
 
 class DFCRN(nn.Module):
@@ -1146,7 +1531,8 @@ class BaseCRNwSubBands(nn.Module):
 if __name__ == "__main__":
     from thop import profile
 
-    net = BaseCRN(64)
+    net = BaseCRN_2(64)
+    net = DFCRN_pwc(64)
     # net = BaseCRNwSubBands(64)
     # net = DFCRN(64)
     # net = BaseCRNwGroupFT(64)
@@ -1156,14 +1542,14 @@ if __name__ == "__main__":
     # flops, param = profile(net, inputs=(inp, inp))
     # print(flops / 1e9, param / 1e6)
 
-    net = CRN_AEC(
-        nframe=512,
-        nhop=256,
-        nfft=512,
-        cnn_num=[32, 64, 128, 128],
-        stride=[2, 2, 1, 1],
-        rnn_hidden_num=128,
-    )
+    # net = CRN_AEC(
+    #     nframe=512,
+    #     nhop=256,
+    #     nfft=512,
+    #     cnn_num=[32, 64, 128, 128],
+    #     stride=[2, 2, 1, 1],
+    #     rnn_hidden_num=128,
+    # )
     # out = net(inp, inp)
     # flops, param = profile(net, inputs=(inp, inp))
     # print(flops / 1e9, param / 1e6)
