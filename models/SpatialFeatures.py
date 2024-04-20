@@ -11,7 +11,7 @@ from itertools import combinations
 from typing import List
 
 
-from conv_stft import STFT
+# from conv_stft import STFT
 
 
 class SpatialFeats(nn.Module):
@@ -19,7 +19,12 @@ class SpatialFeats(nn.Module):
     Input: B,M,T,F complex type or B,2M,T,F real type
     """
 
-    def __init__(self, mic_pos: List[List], sr: int = 16000) -> None:
+    def __init__(
+        self,
+        mic_pos: List[List],
+        feats: List[str] = ["ILD", "IPD", "GCC", "DF"],
+        sr: int = 16000,
+    ) -> None:
         super(SpatialFeats, self).__init__()
         self.n_mic = len(mic_pos)
         self.mic_pos = np.array(mic_pos)
@@ -30,6 +35,7 @@ class SpatialFeats(nn.Module):
         self.eps = 1e-8
         self.snd_velocity = 340.0
         self.sr = sr
+        self.feats = feats
 
     def _init_mic_pos(self):
         self.array_center = np.array([0, 0, 0])  # [3]
@@ -56,7 +62,7 @@ class SpatialFeats(nn.Module):
         Output: [B,M,T,F] complex
         """
         if not torch.is_complex(x):
-            x = rearrange(x, "b (m c) t f -> b m t f c", c=2)
+            x = rearrange(x, "b (m c) t f -> b m t f c", c=2).contiguous()
             x = torch.view_as_complex(x)
         return x
 
@@ -78,13 +84,13 @@ class SpatialFeats(nn.Module):
         Returns: [B, P, C, F], where P is the number of mic combs
         """
         # loc_info = torch.repeat_interleave(loc_info * torch.pi / 180)
-        loc_info = np.array(loc_info).astype(np.float32) * torch.pi / 180
+        loc_info_ = np.array(loc_info).astype(np.float32) * torch.pi / 180
 
         dis_bs = []
         # NOTE: Sampling without considering the pitch angle (elevation),
         # azimuth is the angle of planar rwave
         ele_grid = torch.zeros(1)  # [1,]
-        azm_grid = torch.linspace(*loc_info, steps=A)  # [A,]
+        azm_grid = torch.linspace(*loc_info_, steps=A)  # [A,]
         # mesh_azm: [A,1], ele_grid: [A, 1]
         # mesh_azm, mesh_ele = torch.meshgrid(azm_grid, ele_grid)
         mesh_azm = azm_grid.reshape(-1, 1).repeat(1, len(ele_grid))
@@ -194,7 +200,7 @@ class SpatialFeats(nn.Module):
         Args:
             - ret_type, "cos", "sin", "raw"
         Input: [B,M,T,F] complex or [B,2M,T,F] real
-        Output: [B,P,T,F]
+        Output: [B,Pxlen(ret_type),T,F]
         """
         x = self._transform(x)
         x = x[:, self.combs, ...]  # B,P,2,T,F
@@ -218,6 +224,29 @@ class SpatialFeats(nn.Module):
         return: SRP_PHAT nband x [BS, num_doa, T]
         """
         pass
+
+    def forward(self, x, angle=[-180, 180], A=18, ipd_type=["cos", "sin"]):
+        """format input
+        Input: [B,2M,T,F] real or [B,M,T,F] complex
+        Return: [B,(5P+A),T,F]
+
+        P = N-1+...+1 = N*(N-1)/2
+        """
+        out = []
+        if "GCC" in self.feats:
+            gcc_ = self.compute_GCC(x)  # B,2P,T,F
+            out.append(gcc_)
+        if "DF" in self.feats:
+            df_ = self.compute_DF(x, angle=angle, A=A)
+            out.append(df_)  # B,A,T,F
+        if "IPD" in self.feats:
+            ipd_ = self.compute_IPD(x, ret_type=ipd_type)
+            out.append(ipd_)  # B,2P,T,F
+        if "ILD" in self.feats:
+            ild_ = self.compute_ILD(x)
+            out.append(ild_)  # B,P,T,F
+
+        return torch.concat(out, dim=1)
 
 
 if __name__ == "__main__":
@@ -244,6 +273,9 @@ if __name__ == "__main__":
     print(out[0, 1, 0, :10])
 
     out = opt.compute_DF(inp, A=18)
+
+    out = opt(inp)
+    print("#", out.shape)
 
     # loc_feature_conf = {
     #     "sr": 16000,

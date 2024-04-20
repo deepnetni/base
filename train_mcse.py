@@ -11,6 +11,7 @@ import torch.nn.functional as F
 # from matplotlib import pyplot as plt
 import shutil
 from torch import Tensor
+import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
 # from utils.conv_stft_loss import MultiResolutionSTFTLoss
@@ -26,7 +27,12 @@ from utils.stft_loss import MultiResolutionSTFTLoss
 from utils.trunk import CHiMe3, pad_to_longest
 from models.conv_stft import STFT
 from models.MCAE import MCAE
-from models.aia_trans import DF_AIA_TRANS, dual_aia_trans_chime, McNet_DF_AIA_TRANS
+from models.aia_trans import (
+    DF_AIA_TRANS,
+    dual_aia_trans_chime,
+    McNet_DF_AIA_TRANS,
+    DF_AIA_TRANS_densepwc,
+)
 from models.McNet import MCNet, MCNet_wED, DenseMCNet, MCNetwDense
 from torchmetrics.functional.audio import signal_distortion_ratio as SDR
 from torchmetrics.functional.audio import (
@@ -106,6 +112,12 @@ class Train(Engine):
         self.ms_stft_loss.eval()
 
         self.raw_metrics = self._load_dsets_metrics(self.dsets_mfile)
+        self.pase = wf_builder("config/frontend/PASE+.cfg")
+        self.pase.cuda()
+        self.pase.eval()
+        self.pase.load_pretrained(
+            "pretrained/pase_e199.ckpt", load_last=True, verbose=False
+        )
 
         self.pase = wf_builder("config/frontend/PASE+.cfg").eval()
         self.pase.load_pretrained(
@@ -153,6 +165,7 @@ class Train(Engine):
         # }
         # sdr_lv = -SDR(preds=enh, target=clean).mean()
         sc_loss, mag_loss = self.ms_stft_loss(enh, clean)
+        loss = sc_loss + mag_loss + pmsqe_score  # + 0.05 * sdr_lv
         # else:
         #     cln_ = clean[0, : nlen[0]]  # B,T
         #     enh_ = enh[0, : nlen[0]]
@@ -163,7 +176,17 @@ class Train(Engine):
         #         sc_, mag_ = self.ms_stft_loss(enh_, cln_)
         #         sc_loss = sc_loss + sc_
         #         mag_loss = mag_loss + mag_
-        #     loss = (sc_loss + mag_loss) / len(nlen)  # + 0.05 * pmsqe_score
+
+        # * pase loss
+        clean = clean.unsqueeze(1)  # B,1,T
+        enh = enh.unsqueeze(1)
+        clean_pase = self.pase(clean)
+        clean_pase = clean_pase.flatten(0)
+        enh_pase = self.pase(enh)
+        enh_pase = enh_pase.flatten(0)
+        loss_pase = F.mse_loss(clean_pase, enh_pase)
+
+        loss = loss + loss_pase
 
         # pase loss
         clean = clean.unsqueeze(1)  # B,1,T
@@ -474,8 +497,11 @@ if __name__ == "__main__":
     valid_dset = CHiMe3(cfg["dataset"]["valid_dset"], subdir="dev")
     test_dsets = CHiMe3(cfg["dataset"]["vtest_dset"], subdir="test")
 
-    # net = DF_AIA_TRANS(in_channels=6, feature_size=257, mid_channels=64)  # C,F,C'
-    net = McNet_DF_AIA_TRANS(in_channels=6, feature_size=257, mid_channels=96)  # C,F,C'
+    # net = DF_AIA_TRANS(in_channels=6, feature_size=257, mid_channels=128)  # df_aia_trans_spf_pmsqe
+    net = DF_AIA_TRANS_densepwc(
+        in_channels=6, feature_size=257, mid_channels=128
+    )  # df_aia_trans_spf_densepwc_pmsqe
+    # net = McNet_DF_AIA_TRANS(in_channels=6, feature_size=257, mid_channels=96)  # C,F,C'
     # net = dual_aia_trans_chime(
     #     in_channels=6, feature_size=257, mid_channels=96
     # )  # C,F,C'

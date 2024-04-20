@@ -21,6 +21,7 @@ from models.conv_stft import STFT
 from thop import profile
 from models.multiframe import DF
 from models.McNet import MCNetSpectrum
+from models.SpatialFeatures import SpatialFeats
 
 
 class simam_module(torch.nn.Module):
@@ -352,6 +353,63 @@ class aia_complex_trans_ri_new(nn.Module):
         return enh_real, enh_imag
 
 
+class dense_encoder_pwc(nn.Module):
+    """
+    Input: B,C,T,F
+
+    Arugments:
+      - in_chanels: C of input;
+      - feature_size: F of input
+    """
+
+    def __init__(
+        self, in_channels: int, feature_size: int, out_channels, depth: int = 4
+    ):
+        super(dense_encoder_pwc, self).__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+
+        self.pre_layers = nn.Sequential(
+            nn.Conv2d(
+                in_channels=in_channels,
+                out_channels=out_channels,
+                kernel_size=(1, 1),
+            ),  # [b, 64, nframes, 512]
+            nn.LayerNorm(feature_size),
+            nn.PReLU(out_channels),
+        )
+        self.enc_dense = DenseBlockPWC(
+            depth=depth, in_channels=out_channels, input_size=feature_size
+        )
+
+        self.post_conv = nn.Sequential(
+            nn.Conv2d(
+                in_channels=out_channels,
+                out_channels=out_channels,
+                kernel_size=(1, 3),
+                stride=(1, 2),  # //2
+                padding=(0, 1),
+            ),
+            nn.LayerNorm(feature_size // 2 + 1),
+            nn.PReLU(out_channels),
+            nn.Conv2d(
+                in_channels=out_channels,
+                out_channels=out_channels,
+                kernel_size=(1, 3),
+                stride=(1, 2),  # no padding
+            ),
+            nn.LayerNorm(feature_size // 4),
+            nn.PReLU(out_channels),
+        )
+
+    def forward(self, x):
+        x = self.pre_layers(x)
+        x = self.enc_dense(x)
+        x = self.post_conv(x)
+
+        return x
+
+
 class dense_encoder(nn.Module):
     """
     Input: B,C,T,F
@@ -447,6 +505,60 @@ class dense_encoder_mag(nn.Module):
 
         x2 = self.enc_prelu2(self.enc_norm2(self.enc_conv2(x)))  # [b, 64, T, F // 4]
         return x2
+
+
+class dense_decoder_pwc(nn.Module):
+    def __init__(
+        self, in_channels: int, out_channels: int, feature_size: int, depth: int = 4
+    ):
+        super(dense_decoder_pwc, self).__init__()
+        self.out_channels = 1
+        self.in_channels = in_channels
+        self.dec_dense = DenseBlockPWC(
+            depth=depth, in_channels=in_channels, input_size=feature_size
+        )
+
+        self.dec_conv1 = nn.Sequential(
+            nn.ConstantPad2d((1, 1, 0, 0), value=0.0),  # padding F
+            SPConvTranspose2d(
+                in_channels=in_channels,
+                out_channels=in_channels,
+                kernel_size=(1, 3),
+                r=2,
+            ),
+            nn.LayerNorm(feature_size * 2),
+            nn.PReLU(in_channels),
+        )
+
+        feature_size = feature_size * 2
+
+        self.dec_conv2 = nn.Sequential(
+            nn.ConstantPad2d((1, 1, 0, 0), value=0.0),
+            SPConvTranspose2d(
+                in_channels=in_channels,
+                out_channels=in_channels,
+                kernel_size=(1, 3),
+                r=2,
+            ),
+            nn.ConstantPad2d((1, 0, 0, 0), value=0.0),
+            nn.LayerNorm(feature_size * 2 + 1),
+            nn.PReLU(in_channels),
+        )
+        #
+        self.out_conv = nn.Conv2d(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            kernel_size=(1, 5),
+            padding=(0, 2),
+        )
+
+    def forward(self, x):
+        out = self.dec_dense(x)
+        out = self.dec_conv1(out)
+
+        out = self.dec_conv2(out)
+        out = self.out_conv(out)
+        return out
 
 
 class dense_decoder(nn.Module):
@@ -570,6 +682,53 @@ class SPConvTranspose2d(nn.Module):  # sub-pixel convolution
         # out = out.contiguous().view(
         #     (batch_size, nchannels // self.r, H, -1)
         # )  # b, r2, h, w*r
+        return out
+
+
+class DenseBlockPWC(nn.Module):  # dilated dense block
+    def __init__(self, depth=4, in_channels=64, input_size: int = 257):
+        super(DenseBlockPWC, self).__init__()
+        self.depth = depth
+        self.in_channels = in_channels
+        # self.pad = nn.ConstantPad2d((1, 1, 1, 0), value=0.0)
+        self.twidth = 2
+        self.kernel_size = (self.twidth, 3)
+        for i in range(self.depth):
+            dil = 2**i
+            pad_length = self.twidth + (dil - 1) * (self.twidth - 1) - 1
+            setattr(
+                self,
+                "pad{}".format(i + 1),
+                nn.ConstantPad2d((1, 1, pad_length, 0), value=0.0),
+            )
+            setattr(
+                self,
+                "conv{}".format(i + 1),
+                nn.Sequential(
+                    nn.Conv2d(
+                        self.in_channels * (i + 1),
+                        self.in_channels,
+                        kernel_size=self.kernel_size,
+                        dilation=(dil, 1),
+                    ),
+                    nn.LayerNorm(input_size),
+                    nn.PReLU(in_channels),
+                    nn.Conv2d(in_channels, in_channels, (1, 3), (1, 1), (0, 1)),
+                    nn.LayerNorm(input_size),
+                    nn.PReLU(in_channels),
+                ),
+            )
+            setattr(self, "norm{}".format(i + 1), nn.LayerNorm(input_size))
+            setattr(self, "prelu{}".format(i + 1), nn.PReLU(self.in_channels))
+
+    def forward(self, x):
+        skip = x
+        for i in range(self.depth):
+            out = getattr(self, "pad{}".format(i + 1))(skip)
+            out = getattr(self, "conv{}".format(i + 1))(out)
+            out = getattr(self, "norm{}".format(i + 1))(out)
+            out = getattr(self, "prelu{}".format(i + 1))(out)
+            skip = torch.cat([out, skip], dim=1)
         return out
 
 
@@ -806,6 +965,27 @@ class DF_AIA_TRANS(nn.Module):
             depth=4,
         )  # B, mid_c, T, F // 4
 
+        mic_array = [
+            [-0.1, 0.095, 0],
+            [0, 0.095, 0],
+            [0.1, 0.095, 0],
+            [-0.1, -0.095, 0],
+            [0, -0.095, 0],
+            [0.1, -0.095, 0],
+        ]
+        self.spf_alg = SpatialFeats(mic_array)
+        spf_in_channel = 93  # 15 * 5 + 18
+        self.en_spf = nn.Sequential(
+            dense_encoder(
+                in_channels=spf_in_channel,
+                out_channels=mid_channels,
+                feature_size=feature_size,
+                depth=4,
+            ),  # B, mid_c, T, F // 4
+            nn.Conv2d(mid_channels, mid_channels, (1, 1), (1, 1)),
+            nn.Tanh(),
+        )
+
         self.dual_trans = AIA_Transformer_cau(mid_channels, mid_channels, num_layers=4)
         self.aham = AHAM(input_channel=mid_channels)
         self.ref_channel = ref_channel
@@ -842,20 +1022,145 @@ class DF_AIA_TRANS(nn.Module):
         x = rearrange(x, "b t c-> (b c) t")
         xk = self.stft.transform(x)
         x = rearrange(xk, "(b m) c t f->b (c m) t f", b=nB)
+        x_ = rearrange(xk, "(b m) c t f->b (m c) t f", b=nB)
 
         # noisy_real = x[:, self.ref_channel, :, :]
         # noisy_imag = x[:, self.ref_channel + self.in_channels, :, :]
 
+        x_spf = self.en_spf(self.spf_alg(x_))
         # ri components enconde+ aia_transformer
         x_ri = self.en_ri(x)  # BCTF
+        x_ri = x_ri * x_spf
+
+        # * FTLSTM
         x_last, x_outputlist = self.dual_trans(x_ri)  # BCTF, #BCTFG
         x_ri = self.aham(x_outputlist)  # BCTF
 
         # real and imag decode
-        x_real = self.de1(x_ri)
-        x_imag = self.de2(x_ri)
+        x_real = self.de1(x_ri)  # B,1,T,F
+        x_imag = self.de2(x_ri)  # B,1,T,F
         # x_real, x_imag = x_.chunk(2, dim=1)
-        x_real = x_real.squeeze(dim=1)
+        x_real = x_real.squeeze(dim=1)  # B,T,F
+        x_imag = x_imag.squeeze(dim=1)
+        # enh_real = noisy_real * x_real - noisy_imag * x_imag
+        # enh_imag = noisy_real * x_imag + noisy_imag * x_real
+
+        enhanced_D = torch.stack([x_real, x_imag], 3)  # B,T,F,2
+        enhanced_D = enhanced_D.unsqueeze(1)  # B,1,T,F,2
+
+        # DF coeffs decoder
+        df_coefs = self.DF_de(x_ri)  # BCTF
+        df_coefs = df_coefs.permute(0, 2, 3, 1)  # B,T,F,10
+        df_coefs = self.df_out_transform(df_coefs).contiguous()  # B,5,T,F,2
+
+        DF_spec = self.df_op(enhanced_D, df_coefs)  # B,1,T,F,2
+        DF_spec = DF_spec.squeeze(1)
+
+        DF_real = DF_spec[:, :, :, 0]
+        DF_imag = DF_spec[:, :, :, 1]
+
+        feat = torch.stack([DF_real, DF_imag], dim=1)  # B,2,T,F
+
+        out_wav = self.stft.inverse(feat)  # B, 1, T
+        out_wav = torch.squeeze(out_wav, 1)
+        out_wav = torch.clamp(out_wav, -1, 1)
+
+        return out_wav
+
+
+class DF_AIA_TRANS_densepwc(nn.Module):
+    def __init__(
+        self,
+        in_channels: int,
+        feature_size: int,
+        mid_channels: int,
+        ref_channel: int = 4,
+    ):
+        super().__init__()
+        self.stft = STFT(512, 256)
+        self.en_ri = dense_encoder_pwc(
+            in_channels=in_channels * 2,
+            out_channels=mid_channels,
+            feature_size=feature_size,
+            depth=4,
+        )  # B, mid_c, T, F // 4
+
+        mic_array = [
+            [-0.1, 0.095, 0],
+            [0, 0.095, 0],
+            [0.1, 0.095, 0],
+            [-0.1, -0.095, 0],
+            [0, -0.095, 0],
+            [0.1, -0.095, 0],
+        ]
+        self.spf_alg = SpatialFeats(mic_array)
+        spf_in_channel = 93  # 15 * 5 + 18
+        self.en_spf = nn.Sequential(
+            dense_encoder_pwc(
+                in_channels=spf_in_channel,
+                out_channels=mid_channels,
+                feature_size=feature_size,
+                depth=4,
+            ),  # B, mid_c, T, F // 4
+            nn.Conv2d(mid_channels, mid_channels, (1, 1), (1, 1)),
+            nn.Tanh(),
+        )
+
+        self.dual_trans = AIA_Transformer_cau(mid_channels, mid_channels, num_layers=4)
+        self.aham = AHAM(input_channel=mid_channels)
+        self.ref_channel = ref_channel
+        self.in_channels = in_channels
+
+        self.de1 = dense_decoder_pwc(
+            in_channels=mid_channels,
+            out_channels=1,
+            feature_size=feature_size // 4,
+            depth=4,
+        )
+        self.de2 = dense_decoder_pwc(
+            in_channels=mid_channels,
+            out_channels=1,
+            feature_size=feature_size // 4,
+            depth=4,
+        )
+
+        self.df_order = 5
+        self.df_bins = feature_size
+        self.DF_de = DF_dense_decoder(
+            mid_channels, feature_size // 4, 2 * self.df_order
+        )
+
+        self.df_op = DF(num_freqs=self.df_bins, frame_size=self.df_order, lookahead=0)
+
+        self.df_out_transform = DfOutputReshapeMF(self.df_order, self.df_bins)
+
+    def forward(self, x):
+        """
+        x: B,T,C
+        """
+        nB = x.size(0)
+        x = rearrange(x, "b t c-> (b c) t")
+        xk = self.stft.transform(x)
+        x = rearrange(xk, "(b m) c t f->b (c m) t f", b=nB)
+        x_ = rearrange(xk, "(b m) c t f->b (m c) t f", b=nB)
+
+        # noisy_real = x[:, self.ref_channel, :, :]
+        # noisy_imag = x[:, self.ref_channel + self.in_channels, :, :]
+
+        x_spf = self.en_spf(self.spf_alg(x_))
+        # ri components enconde+ aia_transformer
+        x_ri = self.en_ri(x)  # BCTF
+        x_ri = x_ri * x_spf
+
+        # * FTLSTM
+        x_last, x_outputlist = self.dual_trans(x_ri)  # BCTF, #BCTFG
+        x_ri = self.aham(x_outputlist)  # BCTF
+
+        # real and imag decode
+        x_real = self.de1(x_ri)  # B,1,T,F
+        x_imag = self.de2(x_ri)  # B,1,T,F
+        # x_real, x_imag = x_.chunk(2, dim=1)
+        x_real = x_real.squeeze(dim=1)  # B,T,F
         x_imag = x_imag.squeeze(dim=1)
         # enh_real = noisy_real * x_real - noisy_imag * x_imag
         # enh_imag = noisy_real * x_imag + noisy_imag * x_real
@@ -1105,10 +1410,10 @@ class McNet_DF_AIA_TRANS(nn.Module):
 
 
 if __name__ == "__main__":
-    # model = DF_AIA_TRANS(in_channels=6, feature_size=257, mid_channels=96)  # C,F,C'
-    model = McNet_DF_AIA_TRANS(
-        in_channels=6, feature_size=257, mid_channels=96
-    )  # C,F,C'
+    model = DF_AIA_TRANS(in_channels=6, feature_size=257, mid_channels=96)  # C,F,C'
+    # model = McNet_DF_AIA_TRANS(
+    #     in_channels=6, feature_size=257, mid_channels=96
+    # )  # C,F,C'
     # model = dual_aia_trans_chime(
     #     in_channels=6, feature_size=257, mid_channels=96
     # )  # C,F,C'
