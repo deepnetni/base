@@ -28,14 +28,14 @@ from tqdm import tqdm
 def load_f_list(
     fname: str,
     relative: Union[str, Tuple[str, ...], None] = None,
-    dirname: Optional[str] = None,
+    # dirname: Optional[str] = None,
 ) -> List:
     """
     relative: str or tuple of str each corresponding to element in the file.
     return: [(f1, f2..), (...)]
     """
     f_list = []
-    fname = os.path.join(dirname, fname) if dirname is not None else fname
+    # fname = os.path.join(dirname, fname) if dirname is not None else fname
     with open(fname, "r+") as fp:
         ctx = csv.reader(fp)
         for element in ctx:
@@ -83,38 +83,46 @@ def save_f_list(
 def load_f_list_len(
     fname: str,
     relative: Union[str, Tuple[str, ...], None] = None,
-    dirname: Optional[str] = None,
 ) -> List:
     """
     relative: str or tuple of str each corresponding to element in the file.
     return: [(f1, f2..), (...)]
     """
     f_list = []
-    fname = os.path.join(dirname, fname) if dirname is not None else fname
     with open(fname, "r+") as fp:
         ctx = csv.reader(fp)
         for element in ctx:
             element, num = element[:-1], element[-1]
             if isinstance(relative, tuple):
-                f_list.append(
-                    tuple(
-                        (
-                            list(
-                                map(lambda x, y: os.path.join(x, y), relative, element)
-                            ),
-                            num,
-                        )  # ([...], num)
+                f_items = list(
+                    map(
+                        lambda x, y: os.path.join(x, y.replace("\\", "/")),
+                        relative,
+                        element,
                     )
                 )
+                # ([...], num)
+                f_list.append((f_items, num))
 
             else:
-                f_list.append(
-                    element
-                    if relative is None
-                    else tuple(
-                        (list(map(lambda x: os.path.join(relative, x), element)), num)
+                if relative is not None:
+                    f_items = list(
+                        map(
+                            lambda x: os.path.join(relative, x.replace("\\", "/")),
+                            element,
+                        )
                     )
-                )
+                else:
+                    f_items = element
+                f_list.append((f_items, num))
+
+                # f_list.append(
+                #     element
+                #     if relative is None
+                #     else tuple(
+                #         (list(map(lambda x: os.path.join(relative, x), element)), num)
+                #     )
+                # )
 
     return f_list
 

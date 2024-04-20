@@ -1,15 +1,12 @@
 import argparse
 import os
-from typing import Dict, List, Optional, Union
-from einops import rearrange
+from typing import Dict, List
 
 import numpy as np
-import pesq
 import torch
 import torch.nn.functional as F
 
 # from matplotlib import pyplot as plt
-import shutil
 from torch import Tensor
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
@@ -17,11 +14,9 @@ from torch.utils.data import DataLoader, Dataset
 # from utils.conv_stft_loss import MultiResolutionSTFTLoss
 from tqdm import tqdm
 
-from utils.audiolib import audiowrite
 from utils.Engine import Engine
 from utils.ini_opts import read_ini
 from utils.losses import loss_compressed_mag, loss_pmsqe, loss_sisnr
-from utils.metrics import compute_pesq
 from utils.record import REC, RECDepot
 from utils.stft_loss import MultiResolutionSTFTLoss
 from utils.trunk import CHiMe3, pad_to_longest
@@ -119,11 +114,6 @@ class Train(Engine):
             "pretrained/pase_e199.ckpt", load_last=True, verbose=False
         )
 
-        self.pase = wf_builder("config/frontend/PASE+.cfg").eval()
-        self.pase.load_pretrained(
-            "./pretrained/pase_e199.ckpt", load_last=True, verbose=True
-        )
-
         # self.APC_criterion = APC_SNR_multi_filter(
         #     model_hop=128,
         #     model_winlen=512,
@@ -165,7 +155,6 @@ class Train(Engine):
         # }
         # sdr_lv = -SDR(preds=enh, target=clean).mean()
         sc_loss, mag_loss = self.ms_stft_loss(enh, clean)
-        loss = sc_loss + mag_loss + pmsqe_score  # + 0.05 * sdr_lv
         # else:
         #     cln_ = clean[0, : nlen[0]]  # B,T
         #     enh_ = enh[0, : nlen[0]]
@@ -184,17 +173,6 @@ class Train(Engine):
         clean_pase = clean_pase.flatten(0)
         enh_pase = self.pase(enh)
         enh_pase = enh_pase.flatten(0)
-        loss_pase = F.mse_loss(clean_pase, enh_pase)
-
-        loss = loss + loss_pase
-
-        # pase loss
-        clean = clean.unsqueeze(1)  # B,1,T
-        enh = enh.unsqueeze(1)  # B,1,T
-        clean_pase = self.pase(clean)
-        clean_pase = clean_pase.flatten(1)
-        enh_pase = self.pase(enh)
-        enh_pase = enh_pase.flatten(1)
         loss_pase = F.mse_loss(clean_pase, enh_pase)
 
         loss = sc_loss + mag_loss + pmsqe_score + loss_pase  # + 0.05 * sdr_lv
@@ -484,7 +462,7 @@ def parse():
 if __name__ == "__main__":
     args = parse()
 
-    cfg_fname = "config/config_mcse_win.ini"
+    cfg_fname = "config/config_mcse.ini"
     cfg = read_ini(cfg_fname)
     print("##", cfg_fname)
 
@@ -497,10 +475,12 @@ if __name__ == "__main__":
     valid_dset = CHiMe3(cfg["dataset"]["valid_dset"], subdir="dev")
     test_dsets = CHiMe3(cfg["dataset"]["vtest_dset"], subdir="test")
 
-    # net = DF_AIA_TRANS(in_channels=6, feature_size=257, mid_channels=128)  # df_aia_trans_spf_pmsqe
-    net = DF_AIA_TRANS_densepwc(
+    net = DF_AIA_TRANS(
         in_channels=6, feature_size=257, mid_channels=128
-    )  # df_aia_trans_spf_densepwc_pmsqe
+    )  # df_aia_trans_spf_pmsqe
+    # net = DF_AIA_TRANS_densepwc(
+    #     in_channels=6, feature_size=257, mid_channels=128
+    # )  # df_aia_trans_spf_densepwc_pmsqe
     # net = McNet_DF_AIA_TRANS(in_channels=6, feature_size=257, mid_channels=96)  # C,F,C'
     # net = dual_aia_trans_chime(
     #     in_channels=6, feature_size=257, mid_channels=96
@@ -525,7 +505,7 @@ if __name__ == "__main__":
         test_dsets,
         # net_ae=net_ae,
         net=net,
-        batch_sz=2,
+        batch_sz=4,
         valid_first=False,
         **init,
     )
