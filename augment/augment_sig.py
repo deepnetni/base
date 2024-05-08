@@ -10,7 +10,7 @@ from itertools import repeat
 from tqdm import tqdm
 
 # from demo_synthesizer.synthesizer import Synthesizer
-from demo_synthesizer.synthesizer_chen import Synthesizer
+from demo_synthesizer.synthesizer_bgnoise import Synthesizer
 
 
 def aug(generator: Synthesizer, filenum: int, outdir, fs):
@@ -20,10 +20,6 @@ def aug(generator: Synthesizer, filenum: int, outdir, fs):
     sf.write(f"{outdir}/{filenum}_target.wav", audio["target"], fs)
     sf.write(f"{outdir}/{filenum}_nearend.wav", audio["nearend"], fs)
     # sf.write(f"{outdir}/{filenum}_mic.wav", audio["mic"], fs)
-
-    # sf.write(f"{outdir}/{filenum}_mic.wav", audio["target"], fs)
-    # sf.write(f"{outdir}/{filenum}_nearend.wav", audio["nearend"], fs)
-    # sf.write(f"{outdir}/{filenum}_target.wav", audio["mic"], fs)
 
     return 1
 

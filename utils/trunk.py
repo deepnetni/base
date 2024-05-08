@@ -224,7 +224,7 @@ class NSTrunk(Dataset):
         seed: Optional[int] = None,
         norm: Optional[int] = None,
         return_abspath: bool = False,
-        csv_dir: str = "csvs",
+        csv_dir: str = "manifest",
     ):
         super().__init__()
         self.dir = Path(dirname)
@@ -395,7 +395,7 @@ class AECTrunk(Dataset):
         norm: Optional[int] = None,
         return_abspath: bool = False,
         align: bool = False,
-        csv_dir: str = "csvs",
+        csv_dir: str = "manifest",
         ne_flag=["NE"],
         dt_flag=["DT"],
         fe_flag=["FE"],
@@ -571,7 +571,7 @@ class CHiMe3(Dataset):
         min_len: float = 0.0,
         fs: int = 16000,
         flist: Optional[str] = None,
-        csv_dir: str = "csvs",
+        csv_dir: str = "manifest",
         seed: Optional[int] = None,
         norm: Optional[int] = None,
         return_abspath: bool = False,

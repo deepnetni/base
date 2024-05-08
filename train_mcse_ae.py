@@ -21,10 +21,11 @@ from utils.record import REC, RECDepot
 from utils.stft_loss import MultiResolutionSTFTLoss
 from utils.trunk import CHiMe3, pad_to_longest
 from models.conv_stft import STFT
+from models.MCAE import MCAE, MCAE_2, MCAE_3
 from models.aia_trans import (
     DF_AIA_TRANS,
+    DF_AIA_TRANS_AE,
     dual_aia_trans_chime,
-    McNet_DF_AIA_TRANS,
     DF_AIA_TRANS_densepwc,
 )
 from models.McNet import MCNet, MCNet_wED, DenseMCNet, MCNetwDense
@@ -42,14 +43,14 @@ class Train(Engine):
         train_dset: Dataset,
         valid_dset: Dataset,
         vtest_dset: Dataset,
-        # net_ae: torch.nn.Module,
+        net_ae: torch.nn.Module,
         batch_sz: int,
         **kwargs,
     ):
         super().__init__(**kwargs)
 
-        # self.net_ae = net_ae.to(self.device)
-        # self.net_ae.eval()
+        self.net_ae = net_ae.to(self.device)
+        self.net_ae.eval()
 
         self.train_loader = DataLoader(
             train_dset,
@@ -200,7 +201,8 @@ class Train(Engine):
             # print("##", mic.shape)
 
             self.optimizer.zero_grad()
-            enh = self.net(mic)
+            c, _ = self.net_ae(mic)  # B,C,T,6
+            enh = self.net(mic, c.detach())
             loss_dict = self.loss_fn(sph[:, : enh.size(-1)], enh)
 
             loss = loss_dict["loss"]
@@ -340,7 +342,8 @@ class Train(Engine):
             # nlen = nlen.to(self.device)  # B
 
             with torch.no_grad():
-                enh = self.net(mic)  # B,T,M
+                c, _ = self.net_ae(mic)
+                enh = self.net(mic, c)
 
             metric_dict = self.valid_fn(sph, enh, nlen)
 
@@ -412,7 +415,8 @@ class Train(Engine):
             nlen = self.stft.nLen(nlen).to(self.device)
 
             with torch.no_grad():
-                enh = self.net(mic)
+                c, _ = self.net_ae(mic)
+                enh = self.net(mic, c)
 
             metric_dict = self.valid_fn(sph, enh, nlen, return_loss=False)
             # record the loss
@@ -434,9 +438,11 @@ class Train(Engine):
         import copy
 
         x = torch.randn(1, 16000, 6)
+        net_ae = copy.deepcopy(self.net_ae).cpu()
+        y, _ = net_ae(x)
         flops, _ = profile(
             copy.deepcopy(self.net).cpu(),
-            inputs=(x,),
+            inputs=(x, y),
             verbose=False,
         )
         return flops
@@ -461,9 +467,16 @@ def parse():
 if __name__ == "__main__":
     args = parse()
 
-    cfg_fname = "config/config_mcse.ini"
+    cfg_fname = "config/config_mcse_ae.ini"
     cfg = read_ini(cfg_fname)
     print("##", cfg_fname)
+
+    # net_ae = MCAE_2(nframe=512, nhop=256, nfft=512, in_channels=6, latent_dim=256)
+    # net_ae.load_state_dict(
+    #     torch.load("trained_mcae/MCAE_infonce/checkpoints/epoch_0004.pth")
+    # )
+    net_ae = MCAE_3(nframe=512, nhop=256, nfft=512, in_channels=6)
+    net_ae.load_state_dict(torch.load("trained_mcae/MCAE_3/checkpoints/epoch_0026.pth"))
 
     train_dset = CHiMe3(
         cfg["dataset"]["train_dset"], subdir="train", nlen=3.0, min_len=1.0
@@ -471,12 +484,12 @@ if __name__ == "__main__":
     valid_dset = CHiMe3(cfg["dataset"]["valid_dset"], subdir="dev")
     test_dsets = CHiMe3(cfg["dataset"]["vtest_dset"], subdir="test")
 
-    net = DF_AIA_TRANS(
+    net = DF_AIA_TRANS_AE(
         in_channels=6, feature_size=257, mid_channels=80
-    )  # dfeat__aia_df_c80_mstft_pmsqe_B2
+    )  # df_aia_trans_spf_pmsqe
     # net = DF_AIA_TRANS_densepwc(
-    #     in_channels=6, feature_size=257, mid_channels=80
-    # )  # dfeat__aia_df_pwc_c80_mstft_pmsqe_B2
+    #     in_channels=6, feature_size=257, mid_channels=128
+    # )  # df_aia_trans_spf_densepwc_pmsqe
     # net = McNet_DF_AIA_TRANS(in_channels=6, feature_size=257, mid_channels=96)  # C,F,C'
     # net = dual_aia_trans_chime(
     #     in_channels=6, feature_size=257, mid_channels=96
@@ -499,7 +512,7 @@ if __name__ == "__main__":
         train_dset,
         valid_dset,
         test_dsets,
-        # net_ae=net_ae,
+        net_ae=net_ae,
         net=net,
         batch_sz=2,
         valid_first=False,

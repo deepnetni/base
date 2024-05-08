@@ -20,7 +20,7 @@ from utils.record import REC, RECDepot
 from utils.stft_loss import MultiResolutionSTFTLoss
 from utils.trunk import CHiMe3, pad_to_longest
 from models.conv_stft import STFT
-from models.MCAE import MCAE
+from models.MCAE import MCAE, MCAE_3
 
 
 class Train(Engine):
@@ -92,7 +92,7 @@ class Train(Engine):
             name, filter(lambda p: p.requires_grad, params, **kwargs)
         )
 
-    def loss_fn(self, clean: Tensor, enh: Tensor, mu, logvar, nlen=None) -> Dict:
+    def loss_fn(self, c, x, nlen=None) -> Dict:
         """
         clean: B,T,M
         """
@@ -119,26 +119,23 @@ class Train(Engine):
         # }
 
         if nlen is None:
-            clean = rearrange(clean, "b t m-> (b m) t")
-            enh = rearrange(enh, "b t m-> (b m) t")
-            sc_loss, mag_loss = self.ms_stft_loss(enh, clean)
-            loss = sc_loss + mag_loss  # + 0.05 * pmsqe_score
+            loss, cor = self.net.loss(c, x)
         else:
-            cln_ = clean[0, : nlen[0], ...].permute(1, 0)  # M,T
-            enh_ = enh[0, : nlen[0], ...].permute(1, 0)
-            sc_loss, mag_loss = self.ms_stft_loss(enh_, cln_)
+            c_ = c[0, : nlen[0], ...].unsqueeze(0)
+            x_ = x[0, : nlen[0], ...].unsqueeze(0)
+            c_loss, cor = self.net.loss(c_, x_)
             for idx, n in enumerate(nlen[1:], start=1):
-                cln_ = clean[idx, :n, ...].permute(1, 0)  # M,T
-                enh_ = enh[idx, :n, ...].permute(1, 0)
-                sc_, mag_ = self.ms_stft_loss(enh_, cln_)
-                sc_loss = sc_loss + sc_
-                mag_loss = mag_loss + mag_
-            loss = (sc_loss + mag_loss) / len(nlen)  # + 0.05 * pmsqe_score
+                c_ = c[idx, :n, ...].unsqueeze(0)
+                x_ = x[idx, :n, ...].unsqueeze(0)
+                tmp, tmp2 = self.net.loss(c_, x_)
+                c_loss = c_loss + tmp
+                cor += tmp2
+            loss = c_loss / len(nlen)  # + 0.05 * pmsqe_score
+            cor /= len(nlen)
 
         return {
             "loss": loss,
-            "sc": sc_loss.detach(),
-            "mag": mag_loss.detach(),
+            "cor": cor,
         }
 
         # pase loss
@@ -163,8 +160,8 @@ class Train(Engine):
             mic = mic.to(self.device)  # B,T,6
 
             self.optimizer.zero_grad()
-            enh, lbl, _, mu, logvar = self.net(mic)
-            loss_dict = self.loss_fn(lbl, enh, mu, logvar)
+            c, x = self.net(mic)
+            loss_dict = self.loss_fn(c, x)
 
             loss = loss_dict["loss"]
             loss.backward()
@@ -178,31 +175,13 @@ class Train(Engine):
 
         return losses_rec.state_dict()
 
-    def valid_fn(self, sph: Tensor, enh: Tensor, mu, logvar, nlen_list) -> Dict:
+    def valid_fn(self, c, x, nlen_list) -> Dict:
         """
         B,T,M
         """
-        sisnr_l = []
-        B = sph.size(0)
-        sph_ = sph[0, : nlen_list[0], ...].permute(1, 0)  # C,T
-        enh_ = enh[0, : nlen_list[0], ...].permute(1, 0)
-        sisnr_l.append(self._si_snr(sph_, enh_))
 
-        for i in range(1, B):
-            sph_ = sph[i, : nlen_list[i], ...].permute(1, 0)  # C,T
-            enh_ = enh[i, : nlen_list[i], ...].permute(1, 0)
-            sisnr_l.append(self._si_snr(sph_, enh_))
-
-        sisnr = np.array(sisnr_l)
-        sisnr = np.mean(sisnr)
-
-        # composite = self._eval(clean, enh, 16000)
-        # composite = {k: np.mean(v) for k, v in composite.items()}
-        # pesq = composite.pop("pesq")
-
-        state = {"score": sisnr, "sisnr": sisnr}
-
-        loss_dict = self.loss_fn(sph, enh, mu, logvar, nlen_list)
+        loss_dict = self.loss_fn(c, x, nlen_list)
+        state = {"score": -loss_dict["loss"]}
 
         # return dict(state, **composite)
         return dict(state, **loss_dict)
@@ -226,16 +205,16 @@ class Train(Engine):
             nlen = self.stft.nLen(nlen)
 
             with torch.no_grad():
-                enh, lbl, _, mu, logvar = self.net(mic)  # B,T,M
+                c, x = self.net(mic)  # B,T,M
 
-            metric_dict = self.valid_fn(lbl, enh, mu, logvar, nlen)
+            metric_dict = self.valid_fn(c, x, nlen)
 
-            if draw is True:
-                with torch.no_grad():
-                    exk = self.stft.transform(enh[..., 0])
-                    sxk = self.stft.transform(lbl[..., 0])
-                self._draw_spectrogram(epoch, exk, sxk, titles=("enh-c0", "sph-c0"))
-                draw = False
+            # if draw is True:
+            #     with torch.no_grad():
+            #         exk = self.stft.transform(enh[..., 0])
+            #         sxk = self.stft.transform(lbl[..., 0])
+            #     self._draw_spectrogram(epoch, exk, sxk, titles=("enh-c0", "sph-c0"))
+            #     draw = False
 
             # record the loss
             metric_rec.update(metric_dict)
@@ -362,7 +341,7 @@ if __name__ == "__main__":
 
     cfg_fname = "config/config_mcae.ini"
     cfg = read_ini(cfg_fname)
-    net = MCAE(nframe=512, nhop=256, nfft=512, in_channels=6, latent_dim=128)
+    net = MCAE_3(nframe=512, nhop=256, nfft=512, in_channels=6)
 
     print("##", cfg_fname)
 
@@ -382,7 +361,7 @@ if __name__ == "__main__":
         valid_dset,
         test_dsets,
         net=net,
-        batch_sz=10,
+        batch_sz=2,
         valid_first=False,
         **init,
     )

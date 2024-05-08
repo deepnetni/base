@@ -7,6 +7,8 @@ trained_*/
 *draw/
 vtest*/
 csvs/
+manifest/
 *imdpcrn*.ini
 blind/
 *.svg
+tmp/
