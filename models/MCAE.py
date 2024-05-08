@@ -788,6 +788,158 @@ class MCAE_3(nn.Module):
         return loss.mean(), torch.tensor(cor).mean()
 
 
+class MCAE_F(nn.Module):
+    def __init__(
+        self,
+        nframe: int,
+        nhop: int,
+        nfft: Optional[int] = None,
+        # cnn_num: List = [32, 64, 128],
+        in_channels: int = 6,
+        mid_channel: int = 40,
+        pred_steps: int = 10,
+    ):
+        super().__init__()
+        self.nframe = nframe
+        self.nhop = nhop
+        self.fft_dim = nframe // 2 + 1
+        self.in_channels = in_channels
+        self.eps = 1e-7
+
+        self.stft = STFT(nframe, nhop, nfft=nframe if nfft is None else nfft)
+
+        self.blocks = nn.ModuleList()
+        for i in range(in_channels):
+            self.blocks.append(
+                DenseEncode(
+                    feature_size=self.fft_dim,
+                    in_channels=in_channels * 2,
+                    up_channels=mid_channel,
+                    x_channel=i,
+                )
+            )
+
+        self.autoregressive = nn.Sequential(
+            FTLSTM_RESNET(input_size=mid_channel, hidden_size=128),
+            nn.Dropout(p=0.05),
+            FTLSTM_RESNET(input_size=mid_channel, hidden_size=128),
+            nn.Dropout(p=0.05),
+        )
+        nbin = self.fft_dim // 4 + 1
+
+        self.fc = nn.ModuleList()
+        for i in range(pred_steps):
+            pred = nn.ModuleList(
+                [
+                    nn.Sequential(
+                        Rearrange("b c t f->b t f c"),
+                        nn.Linear(mid_channel, mid_channel),
+                        Rearrange("b t f c->b t c f"),
+                        nn.Linear(nbin, nbin),
+                        Rearrange("b t c f->b c t f"),
+                        nn.Dropout(0.1),
+                    )
+                    for _ in range(self.in_channels)
+                ]
+            )
+            self.fc.append(pred)
+
+    def forward(self, x):
+        nB = x.size(0)
+        x = rearrange(x, "b t c-> (b c) t")
+        xk = self.stft.transform(x)
+        xks = rearrange(xk, "(b m) c t f->b (c m) t f", b=nB)
+
+        z_l, x_l = [], []
+        for l in self.blocks:
+            zn, zx = l(xks)  # B,C,T,F
+            z_l.append(zn)
+            x_l.append(zx)
+
+            z = torch.stack(z_l, dim=-1)  # B,C,T,F,6
+        x = torch.stack(x_l, dim=-1)
+
+        z = rearrange(z, "b c t f m->(b m) c t f")
+        c = self.autoregressive(z)
+        c = rearrange(c, "(b m) c t f -> b c t f m", m=self.in_channels)
+
+        # c = c.mean(dim=-2)  # b,c,t,m
+        # x = x.mean(dim=-2)  # b,c,t,m
+
+        # b,c,t,f,m
+        return c, x
+
+    def batch_cpc_loss(self, z_est, z, tau=0.07):
+        """
+        x: b,c,t-k,6
+        t: b,c,t-k,6
+        """
+        nb, nt = z.size(0), z.size(2)
+        z_e = rearrange(z_est, "b c t m->t (b m) 1 c")
+        z = rearrange(z, "b c t m->t 1 (b m) c")
+        sim = F.cosine_similarity(z_e, z, dim=-1)  # T,bm,bm
+        prob = torch.argmax(F.softmax(sim, dim=-1), dim=-1)  # T,bm
+
+        correct = torch.sum(
+            torch.eq(prob, torch.arange(nb * self.in_channels, device=z.device))
+        )
+        correct = correct / (nb * self.in_channels * nt)
+
+        sim = torch.exp(sim / tau)
+
+        pos_mask = torch.eye(self.in_channels * nb, device=z.device).int()
+        neg_mask = 1 - pos_mask
+        positive = torch.sum(sim * pos_mask, dim=-1)  # T,bm
+        negative = torch.sum(sim * neg_mask, dim=-1)  # T,bm
+        loss = -torch.log(positive / (positive + negative))  # T,bm
+        # loss = loss.sum(0)
+        return loss.mean(), correct.detach()
+
+    def contrastive_loss(self, x, t, tau=0.07):
+        """
+        x: b,t,h,channel(6)
+        t: b,t,h,channel(6)
+        """
+        x = x.permute(0, 1, 3, 2).unsqueeze(-2)  # B,T,6,1,H
+        t = t.permute(0, 1, 3, 2).unsqueeze(-3)  # B,T,1,6,H
+        sim = F.cosine_similarity(x, t, dim=-1)  # B,T,6,6
+        sim = torch.exp(sim / tau)
+        pos_mask = torch.eye(self.in_channels, device=x.device).int()
+        neg_mask = 1 - pos_mask
+        positive = torch.sum(sim * pos_mask, dim=-1)  # B,T,6
+        negative = torch.sum(sim * neg_mask, dim=-1)  # B,T,6
+        loss = -torch.log(positive / (positive + negative))  # B,T,6
+        loss = torch.mean(loss.sum(1))
+        return loss
+
+    def loss(self, c, x):
+        """
+        x: B,C,T,F,6
+        return:
+        """
+
+        # c, x = self.forward(x)  # B,C,T,6
+
+        loss = torch.tensor(0.0, device=x.device).float()
+        cor = []
+
+        for k, layer_l in enumerate(self.fc, start=1):  # steps
+            z_est_l, z_l = [], []
+            for ch, l in enumerate(layer_l):  # each channel
+                ctx = c[..., :-k, ch]  # b,c,t
+                z_ = l(ctx)  # B,C,T
+                z = x[..., k:, ch]  # B,C,T-k
+                z_est_l.append(z_)
+                z_l.append(z)
+            z_ = torch.stack(z_est_l, dim=-1)  # B,C,T-k,6
+            z = torch.stack(z_l, dim=-1)
+            lv, correct = self.batch_cpc_loss(z_, z)
+            loss = loss + lv
+            cor.append(correct)
+
+        return loss.mean(), torch.tensor(cor).mean()
+
+
 if __name__ == "__main__":
     from thop import profile
 
