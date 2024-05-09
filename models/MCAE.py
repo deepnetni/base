@@ -834,6 +834,8 @@ class MCAE_F(nn.Module):
                     nn.Sequential(
                         Rearrange("b c t f->b t f c"),
                         nn.Linear(mid_channel, mid_channel),
+                        # nn.LayerNorm(mid_channel),
+                        # nn.PReLU(mid_channel),
                         Rearrange("b t f c->b t c f"),
                         nn.Linear(nbin, nbin),
                         Rearrange("b t c f->b c t f"),
@@ -871,12 +873,12 @@ class MCAE_F(nn.Module):
 
     def batch_cpc_loss(self, z_est, z, tau=0.07):
         """
-        x: b,c,t-k,6
-        t: b,c,t-k,6
+        x: b,c,t-k,f,6
+        t: b,c,t-k,f,6
         """
         nb, nt = z.size(0), z.size(2)
-        z_e = rearrange(z_est, "b c t m->t (b m) 1 c")
-        z = rearrange(z, "b c t m->t 1 (b m) c")
+        z_e = rearrange(z_est, "b c t f m->t (b m) 1 (c f)")
+        z = rearrange(z, "b c t f m->t 1 (b m) (c f)")
         sim = F.cosine_similarity(z_e, z, dim=-1)  # T,bm,bm
         prob = torch.argmax(F.softmax(sim, dim=-1), dim=-1)  # T,bm
 
@@ -926,9 +928,9 @@ class MCAE_F(nn.Module):
         for k, layer_l in enumerate(self.fc, start=1):  # steps
             z_est_l, z_l = [], []
             for ch, l in enumerate(layer_l):  # each channel
-                ctx = c[..., :-k, ch]  # b,c,t
-                z_ = l(ctx)  # B,C,T
-                z = x[..., k:, ch]  # B,C,T-k
+                ctx = c[..., :-k, :, ch]  # b,c,t,f
+                z_ = l(ctx)  # B,C,T,F
+                z = x[..., k:, :, ch]  # B,C,T-k,F
                 z_est_l.append(z_)
                 z_l.append(z)
             z_ = torch.stack(z_est_l, dim=-1)  # B,C,T-k,6

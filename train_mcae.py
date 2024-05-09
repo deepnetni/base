@@ -20,7 +20,7 @@ from utils.record import REC, RECDepot
 from utils.stft_loss import MultiResolutionSTFTLoss
 from utils.trunk import CHiMe3, pad_to_longest
 from models.conv_stft import STFT
-from models.MCAE import MCAE, MCAE_3
+from models.MCAE import MCAE, MCAE_3, MCAE_F
 
 
 class Train(Engine):
@@ -339,9 +339,10 @@ def parse():
 if __name__ == "__main__":
     args = parse()
 
-    cfg_fname = "config/config_mcae.ini"
+    # cfg_fname = "config/config_mcae.ini"
+    cfg_fname = "config/config_mcae_win.ini"
     cfg = read_ini(cfg_fname)
-    net = MCAE_3(nframe=512, nhop=256, nfft=512, in_channels=6)
+    net = MCAE_F(nframe=512, nhop=256, nfft=512, in_channels=6)
 
     print("##", cfg_fname)
 
@@ -350,7 +351,7 @@ if __name__ == "__main__":
     # )
 
     train_dset = CHiMe3(
-        cfg["dataset"]["train_dset"], subdir="train", nlen=5.0, min_len=1.0
+        cfg["dataset"]["train_dset"], subdir="train", nlen=3.0, min_len=1.0
     )
     valid_dset = CHiMe3(cfg["dataset"]["valid_dset"], subdir="dev")
     test_dsets = CHiMe3(cfg["dataset"]["vtest_dset"], subdir="test")
