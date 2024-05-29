@@ -46,8 +46,8 @@ class Train(Engine):
         # g.manual_seed(0)
         self.valid_loader = DataLoader(
             valid_dset,
-            batch_size=batch_sz,
-            # batch_size=1,
+            # batch_size=batch_sz,
+            batch_size=1,
             num_workers=6,
             pin_memory=True,
             shuffle=True,
@@ -60,8 +60,8 @@ class Train(Engine):
 
         self.vtest_loader = DataLoader(
             vtest_dset,
-            batch_size=batch_sz,
-            # batch_size=1,
+            # batch_size=batch_sz,
+            batch_size=1,
             num_workers=6,
             pin_memory=True,
             shuffle=True,
@@ -339,10 +339,11 @@ def parse():
 if __name__ == "__main__":
     args = parse()
 
-    # cfg_fname = "config/config_mcae.ini"
-    cfg_fname = "config/config_mcae_win.ini"
+    cfg_fname = "config/config_mcae.ini"
+    # cfg_fname = "config/config_mcae_win.ini"
     cfg = read_ini(cfg_fname)
-    net = MCAE_F(nframe=512, nhop=256, nfft=512, in_channels=6)
+    net = MCAE_3(nframe=512, nhop=256, nfft=512, in_channels=6, mid_channel=40)
+    # net = MCAE_F(nframe=512, nhop=256, nfft=512, in_channels=6, mid_channel=16)
 
     print("##", cfg_fname)
 
@@ -351,7 +352,7 @@ if __name__ == "__main__":
     # )
 
     train_dset = CHiMe3(
-        cfg["dataset"]["train_dset"], subdir="train", nlen=3.0, min_len=1.0
+        cfg["dataset"]["train_dset"], subdir="train", nlen=2.5, min_len=1.0
     )
     valid_dset = CHiMe3(cfg["dataset"]["valid_dset"], subdir="dev")
     test_dsets = CHiMe3(cfg["dataset"]["vtest_dset"], subdir="test")
@@ -362,7 +363,8 @@ if __name__ == "__main__":
         valid_dset,
         test_dsets,
         net=net,
-        batch_sz=2,
+        batch_sz=4,
+        # valid_first=True,
         valid_first=False,
         **init,
     )

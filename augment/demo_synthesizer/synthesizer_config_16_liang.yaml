@@ -11,8 +11,11 @@ onlinesynth_nearend_datasets:
 
 onlinesynth_nearend_noises:
   dns_challenge:
-    weight: 1.0
+    weight: 0.5
     dir: '/home/deepni/disk/DNS-Challenge/datasets/noise'
+  3dquest:
+    weight: 0.5
+    dir: '/home/deepni/disk/noise_3dquest_16'
 
 onlinesynth_self_record_noises:
   dns_challenge:

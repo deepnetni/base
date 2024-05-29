@@ -220,6 +220,7 @@ class Synthesizer:
         assert len(x_clean) == len(
             x_noise
         ), f"len(x_clean): {len(x_clean)}, len(x_noise): {len(x_noise)}"
+
         if rms_clean is None:
             rms_clean = rms(x_clean)
         if rms_noise is None:
@@ -230,6 +231,7 @@ class Synthesizer:
             scalar = 1.0
         else:
             scalar = rms_clean / (rms_noise + eps) / (10 ** (snr / 20))
+
         noise = scalar * x_noise
         return x_clean + noise, noise
 
@@ -258,7 +260,7 @@ class Synthesizer:
         x_noise = None
         if random.random() < self.cfg["onlinesynth_nearend_prop_noisy"]:
             noise_data, noise_meta = self.noise_datasets.sample(duration=dur_nearend)
-            x_noise = noise_data["audio"]
+            x_noise = noise_data["audio"]  # get noise
 
             if (
                 random.random()
@@ -269,7 +271,7 @@ class Synthesizer:
                     duration=dur_nearend
                 )
                 bgnoise = bgnoise_data["audio"]
-                x_noise += bgnoise
+                x_noise += bgnoise  # adding self record noise
                 # noise_db = rms(x_noise, db=True)
                 # # make gaussian noise in range [noise_db-10, noise_db]
                 # std = 10 ** ((noise_db - random.random() * 10) / 20)

@@ -24,7 +24,6 @@ from models.conv_stft import STFT
 from models.aia_trans import (
     DF_AIA_TRANS,
     dual_aia_trans_chime,
-    McNet_DF_AIA_TRANS,
     DF_AIA_TRANS_densepwc,
 )
 from models.McNet import MCNet, MCNet_wED, DenseMCNet, MCNetwDense

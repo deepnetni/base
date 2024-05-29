@@ -21,10 +21,11 @@ from utils.record import REC, RECDepot
 from utils.stft_loss import MultiResolutionSTFTLoss
 from utils.trunk import CHiMe3, pad_to_longest
 from models.conv_stft import STFT
-from models.MCAE import MCAE, MCAE_2, MCAE_3
+from models.MCAE import MCAE, MCAE_2, MCAE_3, MCAE_F
 from models.aia_trans import (
     DF_AIA_TRANS,
     DF_AIA_TRANS_AE,
+    DF_AIA_TRANS_AE_F,
     dual_aia_trans_chime,
     DF_AIA_TRANS_densepwc,
 )
@@ -475,8 +476,19 @@ if __name__ == "__main__":
     # net_ae.load_state_dict(
     #     torch.load("trained_mcae/MCAE_infonce/checkpoints/epoch_0004.pth")
     # )
-    net_ae = MCAE_3(nframe=512, nhop=256, nfft=512, in_channels=6)
-    net_ae.load_state_dict(torch.load("trained_mcae/MCAE_3/checkpoints/epoch_0026.pth"))
+    net_ae = MCAE_3(nframe=512, nhop=256, nfft=512, in_channels=6, mid_channel=40)
+    net_ae.load_state_dict(
+        torch.load("trained_mcae/MCAE_3_drop/checkpoints/epoch_0050.pth")
+    )
+    net = DF_AIA_TRANS_AE(
+        in_channels=6, feature_size=257, mid_channels=80
+    )  # df_aia_trans_spf_pmsqe
+
+    # net_ae = MCAE_F(nframe=512, nhop=256, nfft=512, in_channels=6, mid_channel=16)
+    # net_ae.load_state_dict(torch.load("trained_mcae/MCAE_F/checkpoints/epoch_0050.pth"))
+    # net = DF_AIA_TRANS_AE_F(
+    #     in_channels=6, feature_size=257, mid_channels=80
+    # )  # df_aia_trans_spf_pmsqe
 
     train_dset = CHiMe3(
         cfg["dataset"]["train_dset"], subdir="train", nlen=3.0, min_len=1.0
@@ -484,9 +496,6 @@ if __name__ == "__main__":
     valid_dset = CHiMe3(cfg["dataset"]["valid_dset"], subdir="dev")
     test_dsets = CHiMe3(cfg["dataset"]["vtest_dset"], subdir="test")
 
-    net = DF_AIA_TRANS_AE(
-        in_channels=6, feature_size=257, mid_channels=80
-    )  # df_aia_trans_spf_pmsqe
     # net = DF_AIA_TRANS_densepwc(
     #     in_channels=6, feature_size=257, mid_channels=128
     # )  # df_aia_trans_spf_densepwc_pmsqe
