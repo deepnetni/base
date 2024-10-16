@@ -52,7 +52,7 @@ class STFT(nn.Module):
         if isinstance(win, str):
             if win == "hann sqrt":
                 window = get_window(
-                    "hann", nframe, fftbins=True
+                    "hann", self.nframe, fftbins=True
                 )  # fftbins=True, win is not symmetric
 
                 window = np.sqrt(window)
@@ -60,6 +60,8 @@ class STFT(nn.Module):
                 window = get_window(win, self.nframe, fftbins=True)
         elif isinstance(win, np.ndarray):
             window = win
+        else:
+            raise RuntimeError(f"{type(win)} is not supported.")
 
         N = self.nfft
 
@@ -181,18 +183,23 @@ def verify_w_librosa(nlen):
 def verify_self():
     from matplotlib import pyplot as plt
 
-    inp = torch.randn(1, 10000)
-    net = STFT(480, 160, "hann", center=False)
+    inp = torch.randn(1, 1600)
+    net = STFT(480, 160, 480, "hann sqrt", center=False)
     xk = net.transform(inp)
     print(xk.shape)
     out = net.inverse(xk)
     print(out.shape)
     N = out.shape[-1]
     print(torch.sum((inp[..., :N] - out) ** 2))
+    # plt.subplot(211)
+    plt.plot(inp[0, :N], alpha=0.3)
+    # plt.subplot(212)
+    plt.plot(out[0], alpha=0.3)
+    plt.show()
 
-    out = net(inp)
-    print(torch.sum((inp[..., :N] - out) ** 2))
-    diff = inp[0, :N] - out[0]
+    # out = net(inp)
+    # print(torch.sum((inp[..., :N] - out) ** 2))
+    # diff = inp[0, :N] - out[0]
     # plt.plot(inp[0, :N], alpha=0.3)
     # plt.plot(out[0], alpha=0.3)
     # plt.plot(diff[0])
@@ -202,9 +209,14 @@ def verify_self():
 
 if __name__ == "__main__":
     # verify_self()
-    nlen = 10000
-    verify_w_librosa(nlen)
+    # nlen = 10000
+    # verify_w_librosa(nlen)
+    #
+    # net = STFT(512, 256, center=True)
+    # out = net.nLen(nlen)
+    # print(out)
 
-    net = STFT(512, 256, center=True)
-    out = net.nLen(nlen)
-    print(out)
+    net = STFT(256, 128, win="hann sqrt", center=False)
+    inp = torch.ones(1, 16000).float()
+    xk = net.transform(inp)
+    print(xk.shape, xk[0, 0, 0, :])

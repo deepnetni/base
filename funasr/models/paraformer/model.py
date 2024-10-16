@@ -70,7 +70,6 @@ class Paraformer(torch.nn.Module):
         use_1st_decoder_loss: bool = False,
         **kwargs,
     ):
-
         super().__init__()
 
         if specaug is not None:
@@ -91,11 +90,12 @@ class Paraformer(torch.nn.Module):
                 **decoder_conf,
             )
         if ctc_weight > 0.0:
-
             if ctc_conf is None:
                 ctc_conf = {}
 
-            ctc = CTC(odim=vocab_size, encoder_output_size=encoder_output_size, **ctc_conf)
+            ctc = CTC(
+                odim=vocab_size, encoder_output_size=encoder_output_size, **ctc_conf
+            )
         if predictor is not None:
             predictor_class = tables.predictor_classes.get(predictor)
             predictor = predictor_class(**predictor_conf)
@@ -203,9 +203,14 @@ class Paraformer(torch.nn.Module):
             stats["cer_ctc"] = cer_ctc
 
         # decoder: Attention decoder branch
-        loss_att, acc_att, cer_att, wer_att, loss_pre, pre_loss_att = self._calc_att_loss(
-            encoder_out, encoder_out_lens, text, text_lengths
-        )
+        (
+            loss_att,
+            acc_att,
+            cer_att,
+            wer_att,
+            loss_pre,
+            pre_loss_att,
+        ) = self._calc_att_loss(encoder_out, encoder_out_lens, text, text_lengths)
 
         # 3. CTC-Att loss definition
         if self.ctc_weight == 0.0:
@@ -219,7 +224,9 @@ class Paraformer(torch.nn.Module):
 
         # Collect Attn branch stats
         stats["loss_att"] = loss_att.detach() if loss_att is not None else None
-        stats["pre_loss_att"] = pre_loss_att.detach() if pre_loss_att is not None else None
+        stats["pre_loss_att"] = (
+            pre_loss_att.detach() if pre_loss_att is not None else None
+        )
         stats["acc"] = acc_att
         stats["cer"] = cer_att
         stats["wer"] = wer_att
@@ -247,7 +254,6 @@ class Paraformer(torch.nn.Module):
                 ind: int
         """
         with autocast(False):
-
             # Data augmentation
             if self.specaug is not None and self.training:
                 speech, speech_lengths = self.specaug(speech, speech_lengths)
@@ -264,7 +270,6 @@ class Paraformer(torch.nn.Module):
         return encoder_out, encoder_out_lens
 
     def calc_predictor(self, encoder_out, encoder_out_lens):
-
         encoder_out_mask = (
             ~make_pad_mask(encoder_out_lens, maxlen=encoder_out.size(1))[:, None, :]
         ).to(encoder_out.device)
@@ -276,8 +281,9 @@ class Paraformer(torch.nn.Module):
     def cal_decoder_with_predictor(
         self, encoder_out, encoder_out_lens, sematic_embeds, ys_pad_lens
     ):
-
-        decoder_outs = self.decoder(encoder_out, encoder_out_lens, sematic_embeds, ys_pad_lens)
+        decoder_outs = self.decoder(
+            encoder_out, encoder_out_lens, sematic_embeds, ys_pad_lens
+        )
         decoder_out = decoder_outs[0]
         decoder_out = torch.log_softmax(decoder_out, dim=-1)
         return decoder_out, ys_pad_lens
@@ -303,7 +309,6 @@ class Paraformer(torch.nn.Module):
         decoder_out_1st = None
         pre_loss_att = None
         if self.sampling_ratio > 0.0:
-
             sematic_embeds, decoder_out_1st = self.sampler(
                 encoder_out, encoder_out_lens, ys_pad, ys_pad_lens, pre_acoustic_embeds
             )
@@ -311,7 +316,9 @@ class Paraformer(torch.nn.Module):
             sematic_embeds = pre_acoustic_embeds
 
         # 1. Forward decoder
-        decoder_outs = self.decoder(encoder_out, encoder_out_lens, sematic_embeds, ys_pad_lens)
+        decoder_outs = self.decoder(
+            encoder_out, encoder_out_lens, sematic_embeds, ys_pad_lens
+        )
         decoder_out, _ = decoder_outs[0], decoder_outs[1]
 
         if decoder_out_1st is None:
@@ -323,7 +330,9 @@ class Paraformer(torch.nn.Module):
             ys_pad,
             ignore_label=self.ignore_id,
         )
-        loss_pre = self.criterion_pre(ys_pad_lens.type_as(pre_token_length), pre_token_length)
+        loss_pre = self.criterion_pre(
+            ys_pad_lens.type_as(pre_token_length), pre_token_length
+        )
 
         # Compute cer/wer using attention-decoder
         if self.training or self.error_calculator is None:
@@ -334,11 +343,12 @@ class Paraformer(torch.nn.Module):
 
         return loss_att, acc_att, cer_att, wer_att, loss_pre, pre_loss_att
 
-    def sampler(self, encoder_out, encoder_out_lens, ys_pad, ys_pad_lens, pre_acoustic_embeds):
-
-        tgt_mask = (~make_pad_mask(ys_pad_lens, maxlen=ys_pad_lens.max())[:, :, None]).to(
-            ys_pad.device
-        )
+    def sampler(
+        self, encoder_out, encoder_out_lens, ys_pad, ys_pad_lens, pre_acoustic_embeds
+    ):
+        tgt_mask = (
+            ~make_pad_mask(ys_pad_lens, maxlen=ys_pad_lens.max())[:, :, None]
+        ).to(ys_pad.device)
         ys_pad_masked = ys_pad * tgt_mask[:, :, 0]
         if self.share_embedding:
             ys_pad_embed = self.decoder.output_layer.weight[ys_pad_masked]
@@ -362,12 +372,16 @@ class Paraformer(torch.nn.Module):
                 if target_num > 0:
                     input_mask[li].scatter_(
                         dim=0,
-                        index=torch.randperm(seq_lens[li])[:target_num].to(input_mask.device),
+                        index=torch.randperm(seq_lens[li])[:target_num].to(
+                            input_mask.device
+                        ),
                         value=0,
                     )
             input_mask = input_mask.eq(1)
             input_mask = input_mask.masked_fill(~nonpad_positions, False)
-            input_mask_expand_dim = input_mask.unsqueeze(2).to(pre_acoustic_embeds.device)
+            input_mask_expand_dim = input_mask.unsqueeze(2).to(
+                pre_acoustic_embeds.device
+            )
 
         sematic_embeds = pre_acoustic_embeds.masked_fill(
             ~input_mask_expand_dim, 0
@@ -448,9 +462,12 @@ class Paraformer(torch.nn.Module):
         **kwargs,
     ):
         # init beamsearch
-        is_use_ctc = kwargs.get("decoding_ctc_weight", 0.0) > 0.00001 and self.ctc != None
+        is_use_ctc = (
+            kwargs.get("decoding_ctc_weight", 0.0) > 0.00001 and self.ctc != None
+        )
         is_use_lm = (
-            kwargs.get("lm_weight", 0.0) > 0.00001 and kwargs.get("lm_file", None) is not None
+            kwargs.get("lm_weight", 0.0) > 0.00001
+            and kwargs.get("lm_file", None) is not None
         )
         if self.beam_search is None and (is_use_lm or is_use_ctc):
             logging.info("enable beam_search")
@@ -459,7 +476,8 @@ class Paraformer(torch.nn.Module):
 
         meta_data = {}
         if (
-            isinstance(data_in, torch.Tensor) and kwargs.get("data_type", "sound") == "fbank"
+            isinstance(data_in, torch.Tensor)
+            and kwargs.get("data_type", "sound") == "fbank"
         ):  # fbank
             speech, speech_lengths = data_in, data_lengths
             if len(speech.shape) < 3:
@@ -481,12 +499,17 @@ class Paraformer(torch.nn.Module):
             time2 = time.perf_counter()
             meta_data["load_data"] = f"{time2 - time1:0.3f}"
             speech, speech_lengths = extract_fbank(
-                audio_sample_list, data_type=kwargs.get("data_type", "sound"), frontend=frontend
+                audio_sample_list,
+                data_type=kwargs.get("data_type", "sound"),
+                frontend=frontend,
             )
             time3 = time.perf_counter()
             meta_data["extract_feat"] = f"{time3 - time2:0.3f}"
             meta_data["batch_data_time"] = (
-                speech_lengths.sum().item() * frontend.frame_shift * frontend.lfr_n / 1000
+                speech_lengths.sum().item()
+                * frontend.frame_shift
+                * frontend.lfr_n
+                / 1000
             )
 
         speech = speech.to(device=kwargs["device"])
@@ -523,6 +546,8 @@ class Paraformer(torch.nn.Module):
         for i in range(b):
             x = encoder_out[i, : encoder_out_lens[i], :]
             am_scores = decoder_out[i, : pre_token_length[i], :]
+            print("#####", x.shape)
+            print("#####", am_scores.shape)
             if self.beam_search is not None:
                 nbest_hyps = self.beam_search(
                     x=x,
@@ -533,12 +558,13 @@ class Paraformer(torch.nn.Module):
 
                 nbest_hyps = nbest_hyps[: self.nbest]
             else:
-
                 yseq = am_scores.argmax(dim=-1)
                 score = am_scores.max(dim=-1)[0]
                 score = torch.sum(score, dim=-1)
                 # pad with mask tokens to ensure compatibility with sos/eos tokens
-                yseq = torch.tensor([self.sos] + yseq.tolist() + [self.eos], device=yseq.device)
+                yseq = torch.tensor(
+                    [self.sos] + yseq.tolist() + [self.eos], device=yseq.device
+                )
                 nbest_hyps = [Hypothesis(yseq=yseq, score=score)]
             for nbest_idx, hyp in enumerate(nbest_hyps):
                 ibest_writer = None
@@ -556,7 +582,10 @@ class Paraformer(torch.nn.Module):
                 # remove blank symbol id, which is assumed to be 0
                 token_int = list(
                     filter(
-                        lambda x: x != self.eos and x != self.sos and x != self.blank_id, token_int
+                        lambda x: x != self.eos
+                        and x != self.sos
+                        and x != self.blank_id,
+                        token_int,
                     )
                 )
 
@@ -565,7 +594,9 @@ class Paraformer(torch.nn.Module):
                     token = tokenizer.ids2tokens(token_int)
                     text_postprocessed = tokenizer.tokens2text(token)
                     if not hasattr(tokenizer, "bpemodel"):
-                        text_postprocessed, _ = postprocess_utils.sentence_postprocess(token)
+                        text_postprocessed, _ = postprocess_utils.sentence_postprocess(
+                            token
+                        )
 
                     result_i = {"key": key[i], "text": text_postprocessed}
 

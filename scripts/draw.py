@@ -25,28 +25,42 @@ def parse():
     return args
 
 
-def draw_file(fname: str):
+def draw_file(fname: str, nframe=512, nhop=256):
     data, fs = audioread(fname)
+    data = data[..., 0] if data.ndim > 1 else data
+    # data = data[int(0.3 * fs) : int(1.3 * fs)]
+    nbin = nhop + 1
+
+    xlabel = np.arange(0, fs // 2 + 1, 1600 if fs <= 16000 else 3000)  # 1000, 2000, ..., Frequency
+    xticks = (nbin - 1) * xlabel * 2 // fs
 
     xk = stft(  # B,F,T
         data,
-        win_length=512,
-        n_fft=512,
-        hop_length=256,
+        win_length=nframe,
+        n_fft=nframe,
+        hop_length=nhop,
         window="hann",
         center=True,
-    )  # F,T
+    )  # F,T complex
     mag = np.abs(xk)
     spec = 10 * np.log10(mag**2 + 1e-10)
 
     fname, suffix = os.path.splitext(fname)
     fname = fname + ".svg"
-    _, fname = os.path.split(fname)
+    # _, fname = os.path.split(fname)
     print(f"out:{fname}")
+    # plt.imshow(spec, origin="lower", aspect="auto", cmap="viridis")
+    # plt.imshow(spec, origin="lower", aspect="auto", cmap="winter")
     plt.imshow(spec, origin="lower", aspect="auto", cmap="jet")
+    plt.xticks([])
+    plt.yticks([])
     # plt.specgram(data, Fs=fs, cmap="jet")
-    # plt.show()
+    # plt.ylabel("Frequency / Hz")
+    # plt.xlabel("Frame Index")
+    # plt.yticks(ticks=xticks, labels=xlabel)
+    # plt.axis("off")
     plt.savefig(fname, bbox_inches="tight")
+    # plt.show()
 
 
 if __name__ == "__main__":
@@ -55,4 +69,9 @@ if __name__ == "__main__":
     if os.path.isfile(args.src):  # file
         draw_file(args.src)
     elif os.path.isdir(args.src):  # dir
-        pass
+        for f in os.listdir(args.src):
+            if f.startswith(".") or not f.endswith(".wav"):
+                continue
+
+            f = os.path.join(args.src, f)
+            draw_file(f)

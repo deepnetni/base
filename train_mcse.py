@@ -22,10 +22,12 @@ from utils.stft_loss import MultiResolutionSTFTLoss
 from utils.trunk import CHiMe3, pad_to_longest
 from models.conv_stft import STFT
 from models.aia_trans import (
+    AIA_TRANS,
     DF_AIA_TRANS,
     dual_aia_trans_chime,
     DF_AIA_TRANS_densepwc,
 )
+from models.mcse import aia_mcse
 from models.McNet import MCNet, MCNet_wED, DenseMCNet, MCNetwDense
 from torchmetrics.functional.audio import signal_distortion_ratio as SDR
 from torchmetrics.functional.audio import (
@@ -105,12 +107,12 @@ class Train(Engine):
         self.ms_stft_loss.eval()
 
         self.raw_metrics = self._load_dsets_metrics(self.dsets_mfile)
-        self.pase = wf_builder("config/frontend/PASE+.cfg")
-        self.pase.cuda()
-        self.pase.eval()
-        self.pase.load_pretrained(
-            "pretrained/pase_e199.ckpt", load_last=True, verbose=False
-        )
+        # self.pase = wf_builder("config/frontend/PASE+.cfg")
+        # self.pase.cuda()
+        # self.pase.eval()
+        # self.pase.load_pretrained(
+        #     "pretrained/pase_e199.ckpt", load_last=True, verbose=False
+        # )
 
         # self.APC_criterion = APC_SNR_multi_filter(
         #     model_hop=128,
@@ -470,12 +472,15 @@ if __name__ == "__main__":
     valid_dset = CHiMe3(cfg["dataset"]["valid_dset"], subdir="dev")
     test_dsets = CHiMe3(cfg["dataset"]["vtest_dset"], subdir="test")
 
-    net = DF_AIA_TRANS(
-        in_channels=6, feature_size=257, mid_channels=80
-    )  # dfeat__aia_df_c80_mstft_pmsqe_B2
+    # net = DF_AIA_TRANS(
+    #     in_channels=6, feature_size=257, mid_channels=80
+    # )  # dfeat__aia_df_c80_mstft_pmsqe_B2
+    net = aia_mcse(in_channels=6, feature_size=257, mid_channels=80)
     # net = DF_AIA_TRANS_densepwc(
     #     in_channels=6, feature_size=257, mid_channels=80
     # )  # dfeat__aia_df_pwc_c80_mstft_pmsqe_B2
+    #
+    # net = AIA_TRANS(in_channels=6, feature_size=257, mid_channels=80) # aia_df_c80_mstft_pmsqe_B2
     # net = McNet_DF_AIA_TRANS(in_channels=6, feature_size=257, mid_channels=96)  # C,F,C'
     # net = dual_aia_trans_chime(
     #     in_channels=6, feature_size=257, mid_channels=96
@@ -500,7 +505,7 @@ if __name__ == "__main__":
         test_dsets,
         # net_ae=net_ae,
         net=net,
-        batch_sz=2,
+        batch_sz=4,
         valid_first=False,
         **init,
     )

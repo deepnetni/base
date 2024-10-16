@@ -648,7 +648,7 @@ class MCAE_3(nn.Module):
         nfft: Optional[int] = None,
         # cnn_num: List = [32, 64, 128],
         in_channels: int = 6,
-        mid_channel: int = 40,
+        mid_channel: int = 24,
         pred_steps: int = 10,
     ):
         super().__init__()
@@ -695,6 +695,9 @@ class MCAE_3(nn.Module):
             self.fc.append(pred)
 
     def forward(self, x):
+        """
+        x: B,T,6
+        """
         nB = x.size(0)
         x = rearrange(x, "b t c-> (b c) t")
         xk = self.stft.transform(x)
@@ -718,6 +721,23 @@ class MCAE_3(nn.Module):
         x = x.mean(dim=-2)  # b,c,t,m
 
         return c, x
+
+    # def contrastive_loss(self, x, t, tau=0.07):
+    #     """
+    #     x: b,t,h,channel(6)
+    #     t: b,t,h,channel(6)
+    #     """
+    #     x = x.permute(0, 1, 3, 2).unsqueeze(-2)  # B,T,6,1,H
+    #     t = t.permute(0, 1, 3, 2).unsqueeze(-3)  # B,T,1,6,H
+    #     sim = F.cosine_similarity(x, t, dim=-1)  # B,T,6,6
+    #     sim = torch.exp(sim / tau)
+    #     pos_mask = torch.eye(self.in_channels, device=x.device).int()
+    #     neg_mask = 1 - pos_mask
+    #     positive = 0.92 * torch.sum(sim * pos_mask, dim=-1)  # B,T,6
+    #     negative = 0.08 * torch.sum(sim * neg_mask, dim=-1)  # B,T,6
+    #     loss = -torch.log(positive / (positive + negative))  # B,T,6
+    #     loss = torch.mean(loss.sum(1))
+    #     return loss
 
     def batch_cpc_loss(self, z_est, z, tau=0.07):
         """
@@ -744,23 +764,6 @@ class MCAE_3(nn.Module):
         loss = -torch.log(positive / (positive + negative))  # T,bm
         # loss = loss.sum(0)
         return loss.mean(), correct.detach()
-
-    def contrastive_loss(self, x, t, tau=0.07):
-        """
-        x: b,t,h,channel(6)
-        t: b,t,h,channel(6)
-        """
-        x = x.permute(0, 1, 3, 2).unsqueeze(-2)  # B,T,6,1,H
-        t = t.permute(0, 1, 3, 2).unsqueeze(-3)  # B,T,1,6,H
-        sim = F.cosine_similarity(x, t, dim=-1)  # B,T,6,6
-        sim = torch.exp(sim / tau)
-        pos_mask = torch.eye(self.in_channels, device=x.device).int()
-        neg_mask = 1 - pos_mask
-        positive = 0.92 * torch.sum(sim * pos_mask, dim=-1)  # B,T,6
-        negative = 0.08 * torch.sum(sim * neg_mask, dim=-1)  # B,T,6
-        loss = -torch.log(positive / (positive + negative))  # B,T,6
-        loss = torch.mean(loss.sum(1))
-        return loss
 
     def loss(self, c, x):
         """
@@ -1023,6 +1026,23 @@ class MCAE_4(nn.Module):
 
         return c, x
 
+    # def contrastive_loss(self, x, t, tau=0.07):
+    #     """
+    #     x: b,t,h,channel(6)
+    #     t: b,t,h,channel(6)
+    #     """
+    #     x = x.permute(0, 1, 3, 2).unsqueeze(-2)  # B,T,6,1,H
+    #     t = t.permute(0, 1, 3, 2).unsqueeze(-3)  # B,T,1,6,H
+    #     sim = F.cosine_similarity(x, t, dim=-1)  # B,T,6,6
+    #     sim = torch.exp(sim / tau)
+    #     pos_mask = torch.eye(self.in_channels, device=x.device).int()
+    #     neg_mask = 1 - pos_mask
+    #     positive = 0.92 * torch.sum(sim * pos_mask, dim=-1)  # B,T,6
+    #     negative = 0.08 * torch.sum(sim * neg_mask, dim=-1)  # B,T,6
+    #     loss = -torch.log(positive / (positive + negative))  # B,T,6
+    #     loss = torch.mean(loss.sum(1))
+    #     return loss
+
     def batch_cpc_loss(self, z_est, z, tau=0.07):
         """
         x: b,c,t-k,6
@@ -1048,23 +1068,6 @@ class MCAE_4(nn.Module):
         loss = -torch.log(positive / (positive + negative))  # T,bm
         # loss = loss.sum(0)
         return loss.mean(), correct.detach()
-
-    def contrastive_loss(self, x, t, tau=0.07):
-        """
-        x: b,t,h,channel(6)
-        t: b,t,h,channel(6)
-        """
-        x = x.permute(0, 1, 3, 2).unsqueeze(-2)  # B,T,6,1,H
-        t = t.permute(0, 1, 3, 2).unsqueeze(-3)  # B,T,1,6,H
-        sim = F.cosine_similarity(x, t, dim=-1)  # B,T,6,6
-        sim = torch.exp(sim / tau)
-        pos_mask = torch.eye(self.in_channels, device=x.device).int()
-        neg_mask = 1 - pos_mask
-        positive = 0.92 * torch.sum(sim * pos_mask, dim=-1)  # B,T,6
-        negative = 0.08 * torch.sum(sim * neg_mask, dim=-1)  # B,T,6
-        loss = -torch.log(positive / (positive + negative))  # B,T,6
-        loss = torch.mean(loss.sum(1))
-        return loss
 
     def loss(self, c, x):
         """
@@ -1096,10 +1099,11 @@ class MCAE_4(nn.Module):
 
 if __name__ == "__main__":
     from thop import profile
+    import warnings
 
     inp = torch.randn(1, 16000, 6)  # B,T,C
     # inp = torch.randn(2, 12, 30, 257)  # B,C,T
-    net = MCAE_3(512, 256, pred_steps=3)
+    net = MCAE_3(512, 256, mid_channel=36,pred_steps=3)
     # net = MCAE_F(nframe=512, nhop=256, nfft=512, in_channels=6, mid_channel=16)
     # flops, param = profile(net, inputs=(inp,))
     # print(flops / 1e9, param / 1e6)
@@ -1109,6 +1113,11 @@ if __name__ == "__main__":
     c, z = net(inp)
     print(c.shape, z.shape)
     l = net.loss(c, z)
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="This API is being deprecated")
+        flops, params = profile(net, inputs=(inp,), verbose=False)
+    print(f"FLOPs={flops / 1e9}, params={params/1e6:.2f}")
 
     # net.contrastive_loss(chat, c)
     # z, mu, logvar = net.encode(inp)

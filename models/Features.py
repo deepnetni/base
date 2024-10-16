@@ -28,6 +28,7 @@ Example
 import torch
 import torch.nn as nn
 import logging
+import math
 
 logger = logging.getLogger(__name__)
 
@@ -428,9 +429,7 @@ class Filterbank(nn.Module):
             logger.error(err_msg, exc_info=True)
 
         # Filter definition
-        mel = torch.linspace(
-            self._to_mel(self.f_min), self._to_mel(self.f_max), self.n_mels + 2
-        )
+        mel = torch.linspace(self._to_mel(self.f_min), self._to_mel(self.f_max), self.n_mels + 2)
         hz = self._to_hz(mel)
 
         # Computation of the filter bands
@@ -462,9 +461,7 @@ class Filterbank(nn.Module):
             A batch of spectrogram tensors.
         """
         # Computing central frequency and bandwidth of each filter
-        f_central_mat = self.f_central.repeat(self.all_freqs_mat.shape[1], 1).transpose(
-            0, 1
-        )
+        f_central_mat = self.f_central.repeat(self.all_freqs_mat.shape[1], 1).transpose(0, 1)
         band_mat = self.band.repeat(self.all_freqs_mat.shape[1], 1).transpose(0, 1)
 
         # Uncomment to print filter parameters
@@ -483,26 +480,18 @@ class Filterbank(nn.Module):
 
         # Regularization with random changes of filter central frequency and band
         elif self.param_rand_factor != 0 and self.training:
-            rand_change = (
-                1.0
-                + torch.rand(2) * 2 * self.param_rand_factor
-                - self.param_rand_factor
-            )
+            rand_change = 1.0 + torch.rand(2) * 2 * self.param_rand_factor - self.param_rand_factor
             f_central_mat = f_central_mat * rand_change[0]
             band_mat = band_mat * rand_change[1]
 
-        fbank_matrix = self._create_fbank_matrix(f_central_mat, band_mat).to(
-            spectrogram.device
-        )
+        fbank_matrix = self._create_fbank_matrix(f_central_mat, band_mat).to(spectrogram.device)
 
         sp_shape = spectrogram.shape
 
         # Managing multi-channels case (batch, time, channels)
         if len(sp_shape) == 4:
             spectrogram = spectrogram.permute(0, 3, 1, 2)
-            spectrogram = spectrogram.reshape(
-                sp_shape[0] * sp_shape[3], sp_shape[1], sp_shape[2]
-            )
+            spectrogram = spectrogram.reshape(sp_shape[0] * sp_shape[3], sp_shape[1], sp_shape[2])
 
         # FBANK computation
         fbanks = torch.matmul(spectrogram, fbank_matrix)
@@ -590,9 +579,7 @@ class Filterbank(nn.Module):
 
         return fbank_matrix
 
-    def _gaussian_filters(
-        self, all_freqs, f_central, band, smooth_factor=torch.tensor(2)
-    ):
+    def _gaussian_filters(self, all_freqs, f_central, band, smooth_factor=torch.tensor(2)):
         """Returns fbank matrix using gaussian filters.
 
         Arguments
@@ -628,19 +615,13 @@ class Filterbank(nn.Module):
             sharper or flatter filters.
         """
         if self.filter_shape == "triangular":
-            fbank_matrix = self._triangular_filters(
-                self.all_freqs_mat, f_central_mat, band_mat
-            )
+            fbank_matrix = self._triangular_filters(self.all_freqs_mat, f_central_mat, band_mat)
 
         elif self.filter_shape == "rectangular":
-            fbank_matrix = self._rectangular_filters(
-                self.all_freqs_mat, f_central_mat, band_mat
-            )
+            fbank_matrix = self._rectangular_filters(self.all_freqs_mat, f_central_mat, band_mat)
 
         else:
-            fbank_matrix = self._gaussian_filters(
-                self.all_freqs_mat, f_central_mat, band_mat
-            )
+            fbank_matrix = self._gaussian_filters(self.all_freqs_mat, f_central_mat, band_mat)
 
         return fbank_matrix
 
@@ -738,9 +719,7 @@ class DCT(torch.nn.Module):
 
         # Reshape in the case of multi-channels
         if len(input_shape) == 4:
-            dct = dct.reshape(
-                input_shape[0], dct.shape[1], dct.shape[2], input_shape[3]
-            )
+            dct = dct.reshape(input_shape[0], dct.shape[1], dct.shape[2], input_shape[3])
 
         return dct
 

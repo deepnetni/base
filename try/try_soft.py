@@ -7,11 +7,13 @@ from einops import rearrange
 from einops.layers.torch import Rearrange
 
 
-a = torch.randn(3, 3)
+# a = torch.randn(3, 3)
 
-b = nn.Softmax()(a)
-print(b, b.sum(0), b.sum(1))
-print(torch.diag(b))
+# b = nn.Softmax()(a)
+# print(b, b.sum(0), b.sum(1))
+# print(torch.diag(b))
 
-c = torch.tensor(0)
-print(c)
+a = torch.randn(3, 1)
+print(a)
+b = nn.Softmax(dim=0)(a)
+print(b)

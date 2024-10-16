@@ -1,16 +1,17 @@
 import argparse
-import sys
 import os
+from pathlib import Path
+
+import librosa
 import numpy as np
 import soundfile as sf
-import librosa
-from pathlib import Path
 from tqdm import tqdm
 
 
 def segment(fpath: str, ntime: float = 3.0, fs: int = 16000):
     # data: [ch, T]
     data, sr = librosa.load(fpath, sr=fs, mono=False)
+    assert sr == fs
     if data.ndim == 1:  # mono
         nChs = 1
         nL = len(data)
@@ -39,7 +40,7 @@ def run(inp: str, out: str, ntime: float, fs: int):
         if not dirout.exists():
             os.makedirs(out)
 
-        files = list(dirname.glob("*.wav"))
+        files = list(dirname.rglob("[!.]*.wav"))
         for fpath in tqdm(files, ncols=120):
             fname, suffix = fpath.stem, fpath.suffix
 
@@ -47,7 +48,7 @@ def run(inp: str, out: str, ntime: float, fs: int):
 
             for idx in range(len(segs)):
                 d = segs[idx]
-                wname = dirout / f"{fname}_{idx}.{suffix}"
+                wname = dirout / f"{fname}_{idx}{suffix}"
                 sf.write(wname, d, fs)
     elif os.path.isfile(inp):
         pass

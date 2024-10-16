@@ -16,6 +16,21 @@ from .gcc_phat import gcc_phat
 # np.random.seed(0)
 
 
+def clipping_solver(audio, threshold=0.99):
+    """
+    This function helps scale down the audio to solve the clipping issue
+    returnes the scale that can be used to scale clean speech
+    """
+    amplitude_max = np.max(np.abs(audio))
+    scale = None
+    if amplitude_max <= threshold:
+        return audio, scale
+    else:
+        scale = (amplitude_max / threshold) + EPS
+        scaled_audio = audio / scale
+        return scaled_audio, scale
+
+
 def to_frames(
     audio: np.ndarray,
     nframe: int,
@@ -137,56 +152,55 @@ def is_clipped(audio, clipping_threshold=0.99):
     return any(abs(audio) > clipping_threshold)
 
 
-def normalize(audio, target_level=-25):
-    """Normalize the signal power to the target level"""
-    rms = (audio**2).mean() ** 0.5
+def normalize(audio: np.ndarray, target_level=-25):
+    """Normalize the signal power to the target level
+    Input: T,C for stereo, T, for mono
+    """
+    rms = (audio**2).mean(axis=0, keepdims=True) ** 0.5
     scalar = 10 ** (target_level / 20) / (rms + EPS)
     audio = audio * scalar
     return audio
 
 
-def align_ref_to_mic(
-    d_ref: np.ndarray, d_mic: np.ndarray, fs: int = 16000
-) -> np.ndarray:
+def align_ref_to_mic(d_ref: np.ndarray, d_mic: np.ndarray, fs: int = 16000) -> np.ndarray:
     """Align the reference signal to mic signal.
     Return: the aligned ref signal.
     """
     tau, _ = gcc_phat(d_mic, d_ref, fs=fs, interp=1)
     tau = max(0, int((tau - 0.001) * fs))
-    d_ref = np.concatenate([np.zeros(tau), d_ref], axis=-1, dtype=np.float32)[
-        : d_mic.shape[-1]
-    ]
+    d_ref = np.concatenate([np.zeros(tau), d_ref], axis=-1, dtype=np.float32)[: d_mic.shape[-1]]
     return d_ref
 
 
-def audioread(
-    path, sub_mean=True, start=0, stop=None, target_level: Optional[int] = None
-):
+def audioread(path, sub_mean=True, start=0, stop=None, target_level: Optional[int] = None):
     """Function to read audio
     Args:
         target_level: None,int, normalize the power of data to `target_level`, default None, could be -25 dB;
 
-    Return:
-        audio, fs
+    Return: audio, fs
+        audio with shape (T,) for mono channel, (T, C) for stereo.
     """
 
     path = os.path.abspath(path)
     if not os.path.exists(path):
         raise ValueError("[{}] does not exist!".format(path))
 
+    # * audio shape is (T,C) for stereo or (T,) for mono
     audio, sample_rate = sf.read(path, start=start, stop=stop)
-
     if sub_mean:
         audio = audio - np.mean(audio, axis=0, keepdims=True)
 
-    if len(audio.shape) == 1:  # mono
-        if target_level is not None:
-            audio = normalize(audio, target_level)
-    else:  # multi-channel
-        audio = audio.T  # TODO check T,2 -> 2,T
-        audio = audio.sum(axis=0) / audio.shape[0]
-        if target_level is not None:
-            audio = normalize(audio, target_level)
+    if target_level is not None:
+        audio = normalize(audio, target_level)
+
+    # if len(audio.shape) == 1:  # mono
+    #     if target_level is not None:
+    #         audio = normalize(audio, target_level)
+    # else:  # multi-channel with shape T,C
+    #     audio = audio.T  # TODO check T,2 -> 2,T
+    #     audio = audio.sum(axis=0) / audio.shape[0]
+    #     if target_level is not None:
+    #         audio = normalize(audio, target_level)
 
     return audio, sample_rate
 
@@ -205,9 +219,7 @@ def audiowrite(
     if clip_test:
         if is_clipped(audio, clipping_threshold=clipping_threshold):
             raise ValueError(
-                "Clipping detected in audiowrite()! "
-                + destpath
-                + " file not written to disk."
+                "Clipping detected in audiowrite()! " + destpath + " file not written to disk."
             )
 
     if norm:

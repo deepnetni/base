@@ -2,26 +2,30 @@
 from pathlib import Path
 import re
 import torch
+import os
 
-dir = Path("/home/deepnetni/trunk/CHiME3/data/audio/16kHz/isolated/train")
+# dir = Path("/home/deepnetni/trunk/CHiME3/data/audio/16kHz/isolated/train")
 
-for f in dir.iterdir():
-    if not f.is_dir():
-        continue
+# for f in dir.iterdir():
+#     if not f.is_dir():
+#         continue
 
-    # if re.match(".*simu$", str(f)):
-    if f.match("*simu"):
-        a = list(f.rglob(r"*CH1.wav"))
+#     # if re.match(".*simu$", str(f)):
+#     if f.match("*simu"):
+#         a = list(f.rglob(r"*CH1.wav"))
 
-t = str(a[100])
-print(t, type(t))
-p = ("(CAF|PED|STR|BUS).CH1.wav", "ORG.wav")
-print(re.sub(*p, t))
+# t = str(a[100])
+# print(t, type(t))
+# p = ("(CAF|PED|STR|BUS).CH1.wav", "ORG.wav")
+# print(re.sub(*p, t))
 
-a = torch.arange(12).reshape(3, 2, 2)
+# a = torch.arange(12).reshape(3, 2, 2)
 
-print(a)
+# print(a)
 
 
-c = torch.concat([a, a[:, :-1, ...]], dim=1)
-print(c)
+# c = torch.concat([a, a[:, :-1, ...]], dim=1)
+# print(c)
+print(os.path.split("/a/b/c"))
+p = Path("/a/b/c/d.txt")
+print(p.name, type(p.name))

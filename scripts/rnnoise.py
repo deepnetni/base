@@ -84,7 +84,7 @@ def parse():
     )
     parser.add_argument("--src", help="src directory", type=str)
     parser.add_argument("--dst", help="dst directory", type=str)
-    parser.add_argument("--fs", help="sample rate", type=int, default=16000)
+    parser.add_argument("--fs", help="sample rate", type=int, default=48000)
 
     args = parser.parse_args()
 

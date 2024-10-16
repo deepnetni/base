@@ -13,7 +13,7 @@ from models.conv_stft import STFT
 
 from models.DenseNet import DenseNet
 from models.MCAE import MCAE
-
+from utils.register import tables
 
 class FuseBLK(nn.Module):
     """
@@ -787,7 +787,7 @@ class MCNetwDense(nn.Module):
 
         return out
 
-
+@tables.register("models", "mcnet_raw")
 class MCNetRaw(nn.Module):
     def __init__(
         self,
@@ -808,7 +808,7 @@ class MCNetRaw(nn.Module):
         )
         self.narr = nn.Sequential(
             RNN_FC(
-                input_size=76,  # 64 + 12
+                input_size=64 + in_channels * 2,  # 64 + 12
                 output_size=64,
                 hidden_size=256,
                 num_layers=1,

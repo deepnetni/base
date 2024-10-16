@@ -1,0 +1,64 @@
+synth_duration: 10                # the synthetic audio length
+synth_sampling_rate: &fs 16000
+synth_sources: &mics 1            # target synthsize multi-channels
+synth_resampling_type: fft        # resampling type if input file has sr != onlinesynth_sampling_rate
+
+synth_prop_noisy: 0.7             # Percentage of nearend files which are altered with noise
+synth_prop_reverb: 0.6             # Percentage of nearend files which are altered with noise
+synth_snr_interval: [-10, 25]     # SNR (in dB) interval for nearend files affected by noise
+# synth_normalize_volume: -27     # dB level for nearend / target volume normalization. Comment if no normalization is desired
+synth_output_dir: &base_out '/home/deepni/disk/rnnoise_vad/train_300'
+
+LibriSpeech:
+  dirname: "/home/deepni/disk/LibriSpeech/train-clean-100"
+  alignment: "/home/deepni/datasets/LibriSpeech-Alignments/LibriSpeech/train-clean-100"
+
+datasets_noise:
+  dns_challenge:
+    weight: 0.4
+    dir: '/home/deepni/disk/DNS-Challenge/datasets/noise'
+  noise_92:
+    weight: 0.3
+    dir: '/home/deepni/disk/noise_92'
+  noise_claps:
+    weight: 0.3
+    dir: '/home/deepni/disk/noisy_clap_clips'
+
+datasets_rir:
+  normal:
+    weight: 1.0
+    dir: &rir_out '/home/deepni/disk/rnnoise_vad/rirs'
+
+rir_configs:
+  rir_out: *rir_out
+  fs: *fs
+  rt60: [0.2, 1.3]
+  samples: 4096                # number of output samples
+  spker:
+    dist_to_wall: 0.5           # minimal distance to wall
+    dist_to_mics: [0.75, 2.5]   # distance to the center of mic array
+  array:
+    mics: *mics                 # number of microphones
+    type: "radius"              # matrix
+    radius: 0.1                 # radius length if type is 'radius'
+    displacement: [-0.5, 0.5]   # next to the place chosen by the `put` item.
+    put: "center"               # room center + discrement
+    h: [1, 2]
+    angle: [0, 45]              # angle of the first microphone
+  rooms:
+    normal:
+      w: [5, 10]                # width, m
+      h: [3, 4]
+      prop: 1.0
+    small:
+      w: [5, 15]
+      h: [3, 4]
+      prop: 1.0
+    medium:
+      w: [15, 25]
+      h: [3, 4]
+      prop: 0
+    large:
+      w: [25, 30]
+      h: [3, 4]
+      prop: 0

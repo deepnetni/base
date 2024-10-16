@@ -17,6 +17,7 @@ from typing import List
 class SpatialFeats(nn.Module):
     """
     Input: B,M,T,F complex type or B,2M,T,F real type
+    Output: B,(5P+A),T,F, where P for mic combs (N*(N-1)/2), A for angles
     """
 
     def __init__(
@@ -228,9 +229,9 @@ class SpatialFeats(nn.Module):
     def forward(self, x, angle=[-180, 180], A=18, ipd_type=["cos", "sin"]):
         """format input
         Input: [B,2M,T,F] real or [B,M,T,F] complex
-        Return: [B,(5P+A),T,F]
+        Return: [B,(5P+A),T,F], where P for mic combs
 
-        P = N-1+...+1 = N*(N-1)/2
+        P = N-1+...+1 = N*(N-1)/2, where N is the mic channel
         """
         out = []
         if "GCC" in self.feats:

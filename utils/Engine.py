@@ -67,9 +67,14 @@ class Engine(object):
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self.name = name
         self.net = net.to(self.device)
-        self.optimizer = self._config_optimizer(
-            optimizer, filter(lambda p: p.requires_grad, self.net.parameters())
-        )
+        try:
+            self.optimizer = self.config_optimizer()
+        except NotImplementedError:
+            log.info("using default optimizer")
+            self.optimizer = self._config_optimizer(
+                optimizer, filter(lambda p: p.requires_grad, self.net.parameters())
+            )
+
         self.scheduler = self._config_scheduler(scheduler, self.optimizer)
         self.epochs = epochs
         self.start_epoch = 1
@@ -101,14 +106,13 @@ class Engine(object):
             else self.info_dir / name / "dset_metrics.json"
         )
 
-        self.ckpt_dir.mkdir(
-            parents=True, exist_ok=True
-        )  # create directory if not exists
+        self.ckpt_dir.mkdir(parents=True, exist_ok=True)  # create directory if not exists
 
         if resume is True:
             self._load_ckpt() if self.ckpt_file.exists() else log.warning(
                 f"ckpt file: {self.ckpt_file} is not existed."
             )
+            self.resume = True if self.ckpt_file.exists() else False
 
         # tensorboard
         self.tfb_dir = self.info_dir / name / "tfb"
@@ -128,7 +132,7 @@ class Engine(object):
     @staticmethod
     def _config_scheduler(name: str, optimizer: Optimizer):
         supported = {
-            "stepLR": lambda p: lr_scheduler.StepLR(p, step_size=20, gamma=0.8),
+            "stepLR": lambda p: lr_scheduler.StepLR(p, step_size=10, gamma=0.9),
             "reduceLR": lambda p: lr_scheduler.ReduceLROnPlateau(
                 p, mode="min", factor=0.5, patience=1
             ),
@@ -140,12 +144,16 @@ class Engine(object):
         sph: Union[torch.Tensor, np.ndarray],
         enh: Union[torch.Tensor, np.ndarray],
         zero_mean: bool = True,
-    ) -> np.ndarray:
-        # if isinstance(sph, np.ndarray) or isinstance(enh, np.ndarray):
-        #     sph = torch.from_numpy(sph)
-        #     enh = torch.from_numpy(enh)
+    ):
+        """return numpy or torch according to the type of the input"""
+        if isinstance(sph, torch.Tensor):
+            sph = sph.cpu().detach().numpy()
+        if isinstance(enh, torch.Tensor):
+            enh = enh.cpu().detach().numpy()
 
-        return compute_si_snr(sph, enh, zero_mean).cpu().detach().numpy()
+        sph: np.ndarray
+        enh: np.ndarray
+        return compute_si_snr(sph, enh, zero_mean)
 
     @staticmethod
     def _snr(
@@ -153,6 +161,7 @@ class Engine(object):
         enh: Union[np.ndarray, list, torch.Tensor],
         njobs: int = 10,
     ) -> np.ndarray:
+        """element-wise parallel calculation"""
         scores = np.array(
             Parallel(n_jobs=njobs)(delayed(compute_snr)(s, e) for s, e in zip(sph, enh))
         )
@@ -167,6 +176,7 @@ class Engine(object):
         njobs: int = 10,
         mode: str = "wb",
     ) -> np.ndarray:
+        """element-wise parallel calculation"""
         if isinstance(sph, torch.Tensor):
             sph = sph.cpu().detach().numpy()
         if isinstance(enh, torch.Tensor):
@@ -186,14 +196,14 @@ class Engine(object):
         fs: int,
         njobs: int = 10,
     ) -> np.ndarray:
+        """element-wise parallel calculation"""
         if isinstance(sph, torch.Tensor):
             sph = sph.cpu().detach().numpy()
+        if isinstance(enh, torch.Tensor):
             enh = enh.cpu().detach().numpy()
 
         scores = np.array(
-            Parallel(n_jobs=njobs)(
-                delayed(compute_stoi)(s, e, fs) for s, e in zip(sph, enh)
-            )
+            Parallel(n_jobs=njobs)(delayed(compute_stoi)(s, e, fs) for s, e in zip(sph, enh))
         )
         return scores
 
@@ -218,9 +228,7 @@ class Engine(object):
         for _ in scores:
             for k, v in _.items():
                 out.setdefault(k, []).append(v)
-        return {
-            k: np.array(v) for k, v in out.items()
-        }  # {"pesq":,"csig":,"cbak","cvol"}
+        return {k: np.array(v) for k, v in out.items()}  # {"pesq":,"csig":,"cbak","cvol"}
 
     @staticmethod
     def _worker_set_seed(worker_id):
@@ -310,6 +318,10 @@ class Engine(object):
             pass
 
         content += "=" * 60
+
+        if not self.resume:
+            self.writer.add_text("Params", content, global_step=1)
+
         return content
 
     def _net_info(self):
@@ -336,24 +348,19 @@ class Engine(object):
                 "scheduler": self.scheduler.state_dict(),
                 "net": self.net.state_dict(),
             }
+            state_dict = self.post_save_ckpt(state_dict)
             torch.save(state_dict, self.ckpt_file)
 
     def _load_ckpt(self):
         ckpt = torch.load(self.ckpt_file, map_location=self.device)
 
-        self.start_epoch = (
-            ckpt["epoch"] + 1 if self.valid_first is False else ckpt["epoch"]
-        )
+        self.start_epoch = ckpt["epoch"] + 1 if self.valid_first is False else ckpt["epoch"]
         self.best_score = ckpt["best_score"]
         self.optimizer.load_state_dict(ckpt["optimizer"])
         self.scheduler.load_state_dict(ckpt["scheduler"])
         self.net.load_state_dict(ckpt["net"])
 
-    def _save_dnet(self, epoch):
-        pass
-
-    def _load_dnet(self):
-        pass
+        self.post_load_ckpt(ckpt)
 
     def _print(self, tag: str, state_dict: Dict, epoch: int):
         """
@@ -383,11 +390,11 @@ class Engine(object):
                 self.net.eval()
                 score = self._valid_each_epoch(i)
                 self._print("Eval", score, i)
-                if score["score"] > self.best_score:
+                if "score" in score and score["score"] > self.best_score:
                     self.best_score = score["score"]
                     self._save_ckpt(i, is_best=True)
 
-            if self.vtest_per_epoch != 0 and i % self.vtest_per_epoch == 0:
+            if self.vtest_per_epoch != 0 and (i % self.vtest_per_epoch == 0 or i < 5):
                 self.net.eval()
                 scores = self._vtest_each_epoch(i)
                 for name, score in scores.items():
@@ -400,9 +407,7 @@ class Engine(object):
 
     def test(self, epoch: Optional[int] = None):
         if epoch is None:
-            epoch = (
-                self.start_epoch - 1 if self.valid_first is False else self.start_epoch
-            )
+            epoch = self.start_epoch - 1 if self.valid_first is False else self.start_epoch
         self.net.eval()
         scores = self._vtest_each_epoch(epoch)
         # {"dir1":{"-5":{"pesq":v,"stoi":v},"0":{...}},"dir2":{...}}
@@ -413,6 +418,13 @@ class Engine(object):
         for name, score in scores.items():
             self.writer.add_text(f"Test-{name}", json.dumps(score), epoch)
             self._print(f"Test-{name}", score, epoch)
+            print(f"Test-{name}", score, epoch)
+
+    def post_save_ckpt(self, ckpt_dict):
+        return ckpt_dict
+
+    def post_load_ckpt(self, ckpt_dict):
+        pass
 
     def _net_flops(self) -> int:
         # from thop import profile
@@ -429,6 +441,13 @@ class Engine(object):
         """
         return {}
         # return {"loss": 0}
+
+    def config_optimizer(self) -> Optimizer:
+        """
+        define the optimizer in the class,
+        System will use the default implementation `_config_optimzer` if this API is not implemented.
+        """
+        raise NotImplementedError
 
     def _fit_each_epoch(self, epoch: int) -> Dict:
         raise NotImplementedError

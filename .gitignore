@@ -12,3 +12,9 @@ manifest/
 blind/
 *.svg
 tmp/
+
+.*
+*.xlsx
+spectrum/
+spectrum_chime/
+augment/CHiME_Aria_real_RIR/

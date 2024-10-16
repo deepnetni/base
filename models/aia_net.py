@@ -70,9 +70,7 @@ class DilatedDenseNet(nn.Module):
 
 
 class TransformerEncoderLayer(nn.Module):
-    def __init__(
-        self, d_model, nhead, bidirectional=True, dropout=0, activation="relu"
-    ):
+    def __init__(self, d_model, nhead, bidirectional=True, dropout=0, activation="relu"):
         super().__init__()
         self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
         self.gru = GRU(d_model, d_model * 2, 1, bidirectional=bidirectional)
@@ -131,9 +129,7 @@ class TransformerEncoderLayer_cau(nn.Module):
         - feature_size: F of input B,C,T,F
     """
 
-    def __init__(
-        self, feature_size: int, nhead, bidirectional=True, dropout=0, activation="relu"
-    ):
+    def __init__(self, feature_size: int, nhead, bidirectional=True, dropout=0, activation="relu"):
         super().__init__()
         self.self_attn = nn.MultiheadAttention(feature_size, nhead, dropout=dropout)
         # Implementation of Feedforward model
@@ -170,19 +166,18 @@ class TransformerEncoderLayer_cau(nn.Module):
             state["activation"] = F.relu
         super().__setstate__(state)
 
-    def forward(
-        self, x, src_mask=None, src_key_padding_mask=None, is_causal: bool = False
-    ):
+    def forward(self, x, is_causal: bool = False, return_attn=False):
         r"""Pass the input through the encoder layer.
+        Input: T, B, H
         Args:
             src: the sequnce to the encoder layer (required).
             src_mask: the mask for the src sequence (optional).
-            src_key_padding_mask: the mask for the src keys per batch (optional).
         Shape:
             see the docs in Transformer class.
         type: (Tensor, Optional[Tensor], Optional[Tensor]) -> Tensor
         """
 
+        nT = x.size(0)
         x_norm = self.norm3(x)
 
         # src_norm = x
@@ -191,15 +186,15 @@ class TransformerEncoderLayer_cau(nn.Module):
         # attn_mask_in = nn.Transformer.generate_square_subsequent_mask(
         #     x.shape[0], x.device
         # )
-        # print(attn_mask_in)
         # attn_mask_in = None
 
-        x_, _ = self.self_attn(
+        src_mask = torch.ones(nT, nT).triu(1).bool().to(x.device) if is_causal else None
+
+        x_, w = self.self_attn(
             query=x_norm,
             key=x_norm,
             value=x_norm,
             attn_mask=src_mask,
-            key_padding_mask=src_key_padding_mask,
             is_causal=is_causal,
         )
         x = x + self.dropout1(x_)
@@ -210,13 +205,11 @@ class TransformerEncoderLayer_cau(nn.Module):
         x_ = self.post(out)
         x = x + self.dropout2(x_)
         x = self.norm2(x)
-        return x
+        return x if return_attn is False else (x, w)
 
 
 class TransformerEncoderLayer_new(nn.Module):
-    def __init__(
-        self, d_model, nhead, bidirectional=True, dropout=0, activation="relu"
-    ):
+    def __init__(self, d_model, nhead, bidirectional=True, dropout=0, activation="relu"):
         super(TransformerEncoderLayer_new, self).__init__()
         self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
         # Implementation of Feedforward model
@@ -270,6 +263,194 @@ class TransformerEncoderLayer_new(nn.Module):
         return src
 
 
+# class AIA_Transformer(nn.Module):
+#     """
+#     Adaptive time-frequency attention Transformer without interaction on maginitude path and complex path.
+#     args:
+#         input_size: int, dimension of the input feature. The input should have shape
+#                     (batch, seq_len, input_size).
+#         hidden_size: int, dimension of the hidden state.
+#         output_size: int, dimension of the output size.
+#         dropout: float, dropout ratio. Default is 0.
+#         num_layers: int, number of stacked RNN layers. Default is 1.
+#     """
+
+#     def __init__(self, input_size, output_size, dropout=0, num_layers=1):
+#         super().__init__()
+
+#         self.input_size = input_size
+#         self.output_size = output_size
+#         self.k1 = Parameter(torch.ones(1))
+#         self.k2 = Parameter(torch.ones(1))
+
+#         self.pre_conv = nn.Sequential(
+#             nn.Conv2d(input_size, input_size // 2, kernel_size=1), nn.PReLU()
+#         )
+
+#         # dual-path RNN
+#         self.F_trans = nn.ModuleList([])
+#         self.T_trans = nn.ModuleList([])
+#         self.F_norm = nn.ModuleList([])
+#         self.T_norm = nn.ModuleList([])
+
+#         for _ in range(num_layers):
+#             self.F_trans.append(
+#                 TransformerEncoderLayer_cau(
+#                     feature_size=input_size // 2,
+#                     nhead=4,
+#                     dropout=dropout,
+#                     bidirectional=True,
+#                 )
+#             )
+#             self.T_trans.append(
+#                 TransformerEncoderLayer_cau(
+#                     feature_size=input_size // 2,
+#                     nhead=4,
+#                     dropout=dropout,
+#                     bidirectional=False,
+#                 )
+#             )
+#             self.F_norm.append(nn.GroupNorm(1, input_size // 2, eps=1e-8))
+#             self.T_norm.append(nn.GroupNorm(1, input_size // 2, eps=1e-8))
+
+#         # output layer
+#         self.post_conv = nn.Sequential(nn.PReLU(), nn.Conv2d(input_size // 2, output_size, 1))
+
+#     def forward(self, x):
+#         #  input --- [b,  c,  num_frames, frame_size]  --- [b, c, dim2, dim1]
+#         # b, c, dim2, dim1 = input.shape
+#         nB = x.size(0)
+#         nT = x.size(2)
+
+#         output_list = []
+#         inp = self.pre_conv(x)
+
+#         w = []
+#         for i in range(len(self.F_trans)):
+#             # row_input = (
+#             #     output.permute(3, 0, 2, 1).contiguous().view(dim1, b * dim2, -1)
+#             # )  # [F, B*T, c]
+#             x = rearrange(inp, "b c t f -> f (b t) c")
+#             x = self.F_trans[i](x, is_causal=False)  # [F, B*T, c]
+#             # row_output = (
+#             #     row_output.view(dim1, b, dim2, -1).permute(1, 3, 2, 0).contiguous()
+#             # )  # [B, C, T, F]
+#             x = rearrange(x, "f (b t) c-> b c t f", b=nB)
+#             x_f = self.F_norm[i](x)  # [B, C, T, F]
+
+#             # col_input = (
+#             #     output.permute(2, 0, 3, 1).contiguous().view(dim2, b * dim1, -1)
+#             # )  # [T, BxF, C]
+#             x = rearrange(x_f, "b c t f -> t (b f) c")
+#             # mask = torch.ones(nT, nT).triu(1).bool().to(x.device)
+#             # x = self.T_trans[i](x, is_causal=True, src_mask=mask)
+#             x, w_ = self.T_trans[i](x, is_causal=False, return_attn=True)
+#             w.append(w_)
+#             # col_output = (
+#             #     col_output.view(dim2, b, dim1, -1).permute(1, 3, 0, 2).contiguous()
+#             # )  # [T,B,F,C] -> []
+#             x = rearrange(x, "t (b f) c-> b c t f", b=nB)
+#             x_t = self.T_norm[i](x)
+#             inp = inp + self.k1 * x_f + self.k2 * x_t
+#             out_i = self.post_conv(inp)
+#             output_list.append(out_i)
+
+#         return out_i, output_list, w[1]
+
+
+class AIA_Transformer(nn.Module):
+    """
+    Adaptive time-frequency attention Transformer without interaction on maginitude path and complex path.
+    args:
+        input_size: int, dimension of the input feature. The input should have shape
+                    (batch, seq_len, input_size).
+        hidden_size: int, dimension of the hidden state.
+        output_size: int, dimension of the output size.
+        dropout: float, dropout ratio. Default is 0.
+        num_layers: int, number of stacked RNN layers. Default is 1.
+    """
+
+    def __init__(self, input_size, output_size, dropout=0, num_layers=1):
+        super().__init__()
+
+        self.input_size = input_size
+        self.output_size = output_size
+        self.k1 = Parameter(torch.ones(1))
+        self.k2 = Parameter(torch.ones(1))
+
+        self.pre_conv = nn.Sequential(
+            nn.Conv2d(input_size, input_size // 2, kernel_size=1), nn.PReLU()
+        )
+
+        # dual-path RNN
+        self.F_trans = nn.ModuleList([])
+        self.T_trans = nn.ModuleList([])
+        self.F_norm = nn.ModuleList([])
+        self.T_norm = nn.ModuleList([])
+
+        for _ in range(num_layers):
+            self.F_trans.append(
+                TransformerEncoderLayer_cau(
+                    feature_size=input_size // 2,
+                    nhead=4,
+                    dropout=dropout,
+                    bidirectional=True,
+                )
+            )
+            self.T_trans.append(
+                TransformerEncoderLayer_cau(
+                    feature_size=input_size // 2,
+                    nhead=4,
+                    dropout=dropout,
+                    bidirectional=False,
+                )
+            )
+            self.F_norm.append(nn.GroupNorm(1, input_size // 2, eps=1e-8))
+            self.T_norm.append(nn.GroupNorm(1, input_size // 2, eps=1e-8))
+
+        # output layer
+        self.post_conv = nn.Sequential(nn.PReLU(), nn.Conv2d(input_size // 2, output_size, 1))
+
+    def forward(self, x):
+        #  input --- [b,  c,  num_frames, frame_size]  --- [b, c, dim2, dim1]
+        # b, c, dim2, dim1 = input.shape
+        nB = x.size(0)
+        nT = x.size(2)
+
+        output_list = []
+        inp = self.pre_conv(x)
+
+        for i in range(len(self.F_trans)):
+            # row_input = (
+            #     output.permute(3, 0, 2, 1).contiguous().view(dim1, b * dim2, -1)
+            # )  # [F, B*T, c]
+            x = rearrange(inp, "b c t f -> f (b t) c")
+            x = self.F_trans[i](x, is_causal=False)  # [F, B*T, c]
+            # row_output = (
+            #     row_output.view(dim1, b, dim2, -1).permute(1, 3, 2, 0).contiguous()
+            # )  # [B, C, T, F]
+            x = rearrange(x, "f (b t) c-> b c t f", b=nB)
+            x_f = self.F_norm[i](x)  # [B, C, T, F]
+
+            # col_input = (
+            #     output.permute(2, 0, 3, 1).contiguous().view(dim2, b * dim1, -1)
+            # )  # [T, BxF, C]
+            x = rearrange(x_f, "b c t f -> t (b f) c")
+            # mask = torch.ones(nT, nT).triu(1).bool().to(x.device)
+            # x = self.T_trans[i](x, is_causal=True, src_mask=mask)
+            x = self.T_trans[i](x, is_causal=False)
+            # col_output = (
+            #     col_output.view(dim2, b, dim1, -1).permute(1, 3, 0, 2).contiguous()
+            # )  # [T,B,F,C] -> []
+            x = rearrange(x, "t (b f) c-> b c t f", b=nB)
+            x_t = self.T_norm[i](x)
+            inp = inp + self.k1 * x_f + self.k2 * x_t
+            out_i = self.post_conv(inp)
+            output_list.append(out_i)
+
+        return out_i, output_list
+
+
 class AIA_Transformer_cau(nn.Module):
     """
     Adaptive time-frequency attention Transformer without interaction on maginitude path and complex path.
@@ -321,9 +502,7 @@ class AIA_Transformer_cau(nn.Module):
             self.T_norm.append(nn.GroupNorm(1, input_size // 2, eps=1e-8))
 
         # output layer
-        self.post_conv = nn.Sequential(
-            nn.PReLU(), nn.Conv2d(input_size // 2, output_size, 1)
-        )
+        self.post_conv = nn.Sequential(nn.PReLU(), nn.Conv2d(input_size // 2, output_size, 1))
 
     def forward(self, x):
         #  input --- [b,  c,  num_frames, frame_size]  --- [b, c, dim2, dim1]
@@ -335,27 +514,15 @@ class AIA_Transformer_cau(nn.Module):
         inp = self.pre_conv(x)
 
         for i in range(len(self.F_trans)):
-            # row_input = (
-            #     output.permute(3, 0, 2, 1).contiguous().view(dim1, b * dim2, -1)
-            # )  # [F, B*T, c]
             x = rearrange(inp, "b c t f -> f (b t) c")
             x = self.F_trans[i](x, is_causal=False)  # [F, B*T, c]
-            # row_output = (
-            #     row_output.view(dim1, b, dim2, -1).permute(1, 3, 2, 0).contiguous()
-            # )  # [B, C, T, F]
             x = rearrange(x, "f (b t) c-> b c t f", b=nB)
             x_f = self.F_norm[i](x)  # [B, C, T, F]
 
-            # col_input = (
-            #     output.permute(2, 0, 3, 1).contiguous().view(dim2, b * dim1, -1)
-            # )  # [T, BxF, C]
             x = rearrange(x_f, "b c t f -> t (b f) c")
             # mask = torch.ones(nT, nT).triu(1).bool().to(x.device)
             # x = self.T_trans[i](x, is_causal=True, src_mask=mask)
-            x = self.T_trans[i](x, is_causal=False)
-            # col_output = (
-            #     col_output.view(dim2, b, dim1, -1).permute(1, 3, 0, 2).contiguous()
-            # )  # [T,B,F,C] -> []
+            x = self.T_trans[i](x, is_causal=True)
             x = rearrange(x, "t (b f) c-> b c t f", b=nB)
             x_t = self.T_norm[i](x)
             inp = inp + self.k1 * x_f + self.k2 * x_t
@@ -365,87 +532,87 @@ class AIA_Transformer_cau(nn.Module):
         return out_i, output_list
 
 
-class AIA_Transformer(nn.Module):
-    """
-    Adaptive time-frequency attention Transformer without interaction on maginitude path and complex path.
-    args:
-        input_size: int, dimension of the input feature. The input should have shape
-                    (batch, seq_len, input_size).
-        hidden_size: int, dimension of the hidden state.
-        output_size: int, dimension of the output size.
-        dropout: float, dropout ratio. Default is 0.
-        num_layers: int, number of stacked RNN layers. Default is 1.
-    """
+# class AIA_Transformer(nn.Module):
+#     """
+#     Adaptive time-frequency attention Transformer without interaction on maginitude path and complex path.
+#     args:
+#         input_size: int, dimension of the input feature. The input should have shape
+#                     (batch, seq_len, input_size).
+#         hidden_size: int, dimension of the hidden state.
+#         output_size: int, dimension of the output size.
+#         dropout: float, dropout ratio. Default is 0.
+#         num_layers: int, number of stacked RNN layers. Default is 1.
+#     """
 
-    def __init__(self, input_size, output_size, dropout=0, num_layers=1):
-        super(AIA_Transformer, self).__init__()
+#     def __init__(self, input_size, output_size, dropout=0, num_layers=1):
+#         super(AIA_Transformer, self).__init__()
 
-        self.input_size = input_size
-        self.output_size = output_size
-        self.k1 = Parameter(torch.ones(1))
-        self.k2 = Parameter(torch.ones(1))
+#         self.input_size = input_size
+#         self.output_size = output_size
+#         self.k1 = Parameter(torch.ones(1))
+#         self.k2 = Parameter(torch.ones(1))
 
-        self.input = nn.Sequential(
-            nn.Conv2d(input_size, input_size // 2, kernel_size=1), nn.PReLU()
-        )
+#         self.input = nn.Sequential(
+#             nn.Conv2d(input_size, input_size // 2, kernel_size=1), nn.PReLU()
+#         )
 
-        # dual-path RNN
-        self.row_trans = nn.ModuleList([])
-        self.col_trans = nn.ModuleList([])
-        self.row_norm = nn.ModuleList([])
-        self.col_norm = nn.ModuleList([])
-        for i in range(num_layers):
-            self.row_trans.append(
-                TransformerEncoderLayer(
-                    d_model=input_size // 2,
-                    nhead=4,
-                    dropout=dropout,
-                    bidirectional=True,
-                )
-            )
-            self.col_trans.append(
-                TransformerEncoderLayer(
-                    d_model=input_size // 2,
-                    nhead=4,
-                    dropout=dropout,
-                    bidirectional=True,
-                )
-            )
-            self.row_norm.append(nn.GroupNorm(1, input_size // 2, eps=1e-8))
-            self.col_norm.append(nn.GroupNorm(1, input_size // 2, eps=1e-8))
+#         # dual-path RNN
+#         self.row_trans = nn.ModuleList([])
+#         self.col_trans = nn.ModuleList([])
+#         self.row_norm = nn.ModuleList([])
+#         self.col_norm = nn.ModuleList([])
+#         for i in range(num_layers):
+#             self.row_trans.append(
+#                 TransformerEncoderLayer(
+#                     d_model=input_size // 2,
+#                     nhead=4,
+#                     dropout=dropout,
+#                     bidirectional=True,
+#                 )
+#             )
+#             self.col_trans.append(
+#                 TransformerEncoderLayer(
+#                     d_model=input_size // 2,
+#                     nhead=4,
+#                     dropout=dropout,
+#                     bidirectional=True,
+#                 )
+#             )
+#             self.row_norm.append(nn.GroupNorm(1, input_size // 2, eps=1e-8))
+#             self.col_norm.append(nn.GroupNorm(1, input_size // 2, eps=1e-8))
 
-        # output layer
-        self.output = nn.Sequential(
-            nn.PReLU(), nn.Conv2d(input_size // 2, output_size, 1)
-        )
+#         # output layer
+#         self.output = nn.Sequential(
+#             nn.PReLU(), nn.Conv2d(input_size // 2, output_size, 1)
+#         )
 
-    def forward(self, input):
-        #  input --- [b,  c,  num_frames, frame_size]  --- [b, c, dim2, dim1]
-        b, c, dim2, dim1 = input.shape
-        output_list = []
-        output = self.input(input)
-        for i in range(len(self.row_trans)):
-            row_input = (
-                output.permute(3, 0, 2, 1).contiguous().view(dim1, b * dim2, -1)
-            )  # [F, B*T, c]
-            row_output = self.row_trans[i](row_input)  # [F, B*T, c]
-            row_output = (
-                row_output.view(dim1, b, dim2, -1).permute(1, 3, 2, 0).contiguous()
-            )  # [B, C, T, F]
-            row_output = self.row_norm[i](row_output)  # [B, C, T, F]
+#     def forward(self, input):
+#         #  input --- [b,  c,  num_frames, frame_size]  --- [b, c, dim2, dim1]
+#         b, c, dim2, dim1 = input.shape
+#         output_list = []
+#         output = self.input(input)
+#         for i in range(len(self.row_trans)):
+#             row_input = (
+#                 output.permute(3, 0, 2, 1).contiguous().view(dim1, b * dim2, -1)
+#             )  # [F, B*T, c]
+#             row_output = self.row_trans[i](row_input)  # [F, B*T, c]
+#             row_output = (
+#                 row_output.view(dim1, b, dim2, -1).permute(1, 3, 2, 0).contiguous()
+#             )  # [B, C, T, F]
+#             row_output = self.row_norm[i](row_output)  # [B, C, T, F]
 
-            col_input = output.permute(2, 0, 3, 1).contiguous().view(dim2, b * dim1, -1)
-            col_output = self.col_trans[i](col_input)
-            col_output = (
-                col_output.view(dim2, b, dim1, -1).permute(1, 3, 0, 2).contiguous()
-            )
-            col_output = self.col_norm[i](col_output)
-            output = output + self.k1 * row_output + self.k2 * col_output
-            output_i = self.output(output)
-            output_list.append(output_i)
-        del row_input, row_output, col_input, col_output
+#             col_input = output.permute(2, 0, 3, 1).contiguous().view(dim2, b * dim1, -1)
+#             col_output = self.col_trans[i](col_input)
+#             col_output = (
+#                 col_output.view(dim2, b, dim1, -1).permute(1, 3, 0, 2).contiguous()
+#             )
+#             col_output = self.col_norm[i](col_output)
+#             output = output + self.k1 * row_output + self.k2 * col_output
+#             output_i = self.output(output)
+#             output_list.append(output_i)
+#         del row_input, row_output, col_input, col_output
 
-        return output_i, output_list
+#         return output_i, output_list
 
 
 class AIA_Transformer_new(nn.Module):
@@ -514,9 +681,7 @@ class AIA_Transformer_new(nn.Module):
 
             col_input = output.permute(2, 0, 3, 1).contiguous().view(dim2, b * dim1, -1)
             col_output = self.col_trans[i](col_input)
-            col_output = (
-                col_output.view(dim2, b, dim1, -1).permute(1, 3, 0, 2).contiguous()
-            )
+            col_output = col_output.view(dim2, b, dim1, -1).permute(1, 3, 0, 2).contiguous()
             col_output = self.col_norm[i](col_output)
             output = output + self.k1 * row_output + self.k2 * col_output
             # output_i = self.output(output)
@@ -575,9 +740,7 @@ class AIA_Transformer_merge(nn.Module):
             self.col_norm.append(nn.GroupNorm(1, input_size // 2, eps=1e-8))
 
         # output layer
-        self.output = nn.Sequential(
-            nn.PReLU(), nn.Conv2d(input_size // 2, output_size, 1)
-        )
+        self.output = nn.Sequential(nn.PReLU(), nn.Conv2d(input_size // 2, output_size, 1))
 
     def forward(self, input1, input2):
         #  input --- [B,  C,  T, F]  --- [b, c, dim2, dim1]
@@ -713,9 +876,7 @@ class AIA_DCN_Transformer_merge(nn.Module):
             self.col_norm.append(nn.GroupNorm(1, input_size // 2, eps=1e-8))
 
         # output layer
-        self.output = nn.Sequential(
-            nn.PReLU(), nn.Conv2d(input_size // 2, output_size, 1)
-        )
+        self.output = nn.Sequential(nn.PReLU(), nn.Conv2d(input_size // 2, output_size, 1))
 
     def forward(self, input1, input2):
         #  input --- [B,  C,  T, F]  --- [b, c, dim2, dim1]
@@ -739,9 +900,7 @@ class AIA_DCN_Transformer_merge(nn.Module):
             intra_out_DCN_i = intra_out_DCN_i.permute(0, 1, 3, 2)
 
             AFA_input_mag = (
-                intra_out_DCN_i.permute(3, 0, 2, 1)
-                .contiguous()
-                .view(dim1, b * dim2, -1)
+                intra_out_DCN_i.permute(3, 0, 2, 1).contiguous().view(dim1, b * dim2, -1)
             )  # [F, B*T, c]
             AFA_output_mag = self.row_trans[i](AFA_input_mag)  # [F, B*T, c]
             AFA_output_mag = (
@@ -750,9 +909,7 @@ class AIA_DCN_Transformer_merge(nn.Module):
             AFA_output_mag = self.row_norm[i](AFA_output_mag)  # [B, C, T, F]
 
             ATA_input_mag = (
-                intra_out_DCN_i.permute(2, 0, 3, 1)
-                .contiguous()
-                .view(dim2, b * dim1, -1)
+                intra_out_DCN_i.permute(2, 0, 3, 1).contiguous().view(dim2, b * dim1, -1)
             )  # [T, B*F, C]
             ATA_output_mag = self.col_trans[i](ATA_input_mag)  # [T, B*F, C]
             ATA_output_mag = (
@@ -780,9 +937,7 @@ class AIA_DCN_Transformer_merge(nn.Module):
 
             # input_ri_mag = output_ri_i + output_list_mag[-1]
             AFA_input_ri = (
-                intra_out_DCN_ri.permute(3, 0, 2, 1)
-                .contiguous()
-                .view(dim1, b * dim2, -1)
+                intra_out_DCN_ri.permute(3, 0, 2, 1).contiguous().view(dim1, b * dim2, -1)
             )  # [F, B*T, c]
             AFA_output_ri = self.row_trans[i](AFA_input_ri)  # [F, B*T, c]
             AFA_output_ri = (
@@ -791,9 +946,7 @@ class AIA_DCN_Transformer_merge(nn.Module):
             AFA_output_ri = self.row_norm[i](AFA_output_ri)  # [B, C, T, F]
 
             ATA_input_ri = (
-                intra_out_DCN_ri.permute(2, 0, 3, 1)
-                .contiguous()
-                .view(dim2, b * dim1, -1)
+                intra_out_DCN_ri.permute(2, 0, 3, 1).contiguous().view(dim2, b * dim1, -1)
             )  # [T, B*F, C]
             ATA_output_ri = self.col_trans[i](ATA_input_ri)  # [T, B*F, C]
             ATA_output_ri = (
@@ -871,9 +1024,7 @@ class AHAM(nn.Module):  # aham merge
 class AHAM_ori(
     nn.Module
 ):  # aham merge, share the weights on 1D CNN get better performance and lower parameter
-    def __init__(
-        self, input_channel=64, kernel_size=(1, 1), bias=True, act=nn.ReLU(True)
-    ):
+    def __init__(self, input_channel=64, kernel_size=(1, 1), bias=True, act=nn.ReLU(True)):
         super(AHAM_ori, self).__init__()
 
         self.k3 = Parameter(torch.zeros(1))

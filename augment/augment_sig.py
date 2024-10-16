@@ -9,8 +9,8 @@ from itertools import repeat
 
 from tqdm import tqdm
 
-# from demo_synthesizer.synthesizer import Synthesizer
-from demo_synthesizer.synthesizer_bgnoise import Synthesizer
+# from synthesizer.synthesizer import Synthesizer
+from synthesizer.synthesizer_bgnoise import Synthesizer
 
 
 def aug(generator: Synthesizer, filenum: int, outdir, fs):
@@ -27,12 +27,8 @@ def aug(generator: Synthesizer, filenum: int, outdir, fs):
 def aug_2(yaml, filenum: int, outdir, fs):
     generator = Synthesizer(yaml)
     audio = generator.generate()
-    # print("#", len(audio["target"]), audio["target"][0], os.getpid())
-    #
 
-    sf.write(
-        f"{outdir}/{filenum}_target.wav", audio["target"] - audio["target"].mean(), fs
-    )
+    sf.write(f"{outdir}/{filenum}_target.wav", audio["target"] - audio["target"].mean(), fs)
     sf.write(f"{outdir}/{filenum}_nearend.wav", audio["nearend"], fs)
     # sf.write(f"{outdir}/{filenum}_mic.wav", audio["mic"], fs)
 

@@ -57,7 +57,14 @@ def eval_composite(ref_wav, deg_wav, sample_rate):
     Covl = 1.594 + 0.805 * pesq_raw - 0.512 * llr_mean - 0.007 * wss_dist
     Covl = trim_mos(Covl)
 
-    return {"pesq": pesq_raw, "csig": Csig, "cbak": Cbak, "covl": Covl}
+    return {
+        "csig": Csig,
+        "cbak": Cbak,
+        "covl": Covl,
+        # "-snr": np.mean(snr_mean),
+        # "-seg-snr": segSNR,
+        # "-pesq": pesq_raw,
+    }
 
 
 # ----------------------------- HELPERS ------------------------------------ #
@@ -301,9 +308,7 @@ def wss(ref_wav, deg_wav, srate):
 
         # (4) Compute Spectral Shape (dB[i+1] - dB[i])
         clean_slope = clean_energy[1:num_crit] - clean_energy[: num_crit - 1]
-        processed_slope = (
-            processed_energy[1:num_crit] - processed_energy[: num_crit - 1]
-        )
+        processed_slope = processed_energy[1:num_crit] - processed_energy[: num_crit - 1]
 
         # (5) Find the nearest peak locations in the spectra to each
         # critical band. If the slope is negative, we search
@@ -350,22 +355,16 @@ def wss(ref_wav, deg_wav, srate):
         clean_loc_peak = np.array(clean_loc_peak)
         processed_loc_peak = np.array(processed_loc_peak)
         Wmax_clean = Kmax / (Kmax + dBMax_clean - clean_energy[: num_crit - 1])
-        Wlocmax_clean = Klocmax / (
-            Klocmax + clean_loc_peak - clean_energy[: num_crit - 1]
-        )
+        Wlocmax_clean = Klocmax / (Klocmax + clean_loc_peak - clean_energy[: num_crit - 1])
         W_clean = Wmax_clean * Wlocmax_clean
-        Wmax_processed = Kmax / (
-            Kmax + dBMax_processed - processed_energy[: num_crit - 1]
-        )
+        Wmax_processed = Kmax / (Kmax + dBMax_processed - processed_energy[: num_crit - 1])
         Wlocmax_processed = Klocmax / (
             Klocmax + processed_loc_peak - processed_energy[: num_crit - 1]
         )
         W_processed = Wmax_processed * Wlocmax_processed
         W = (W_clean + W_processed) / 2
         distortion.append(
-            np.sum(
-                W * (clean_slope[: num_crit - 1] - processed_slope[: num_crit - 1]) ** 2
-            )
+            np.sum(W * (clean_slope[: num_crit - 1] - processed_slope[: num_crit - 1]) ** 2)
         )
 
         # this normalization is not part of Klatt's paper, but helps
@@ -425,14 +424,15 @@ def llr(ref_wav, deg_wav, srate):
         # ARA.^T
         denominator = A_clean.dot(toeplitz(R_clean)).dot(A_clean.T)
 
-        if (numerator / denominator) <= 0:
-            print(f"Numerator: {numerator}")
-            print(f"Denominator: {denominator}")
-        # with warnings.catch_warnings():
-        #     warnings.filterwarnings(
-        #         "ignore", message="invalid value encountered in log"
-        #     )
-        log_ = np.log(numerator / denominator)
+        # if (numerator / denominator) <= 0:
+        #     print(f"Numerator: {numerator}")
+        #     print(f"Denominator: {denominator}")
+        #     print(f"Div: {numerator / denominator}")
+
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message="invalid value encountered in log")
+            log_ = np.log(numerator / denominator)
+
         distortion.append(np.squeeze(log_))
         start += int(skiprate)
     return np.nan_to_num(np.array(distortion))

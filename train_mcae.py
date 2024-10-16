@@ -342,7 +342,7 @@ if __name__ == "__main__":
     cfg_fname = "config/config_mcae.ini"
     # cfg_fname = "config/config_mcae_win.ini"
     cfg = read_ini(cfg_fname)
-    net = MCAE_3(nframe=512, nhop=256, nfft=512, in_channels=6, mid_channel=40)
+    net = MCAE_3(nframe=512, nhop=256, nfft=512, in_channels=6, mid_channel=24)
     # net = MCAE_F(nframe=512, nhop=256, nfft=512, in_channels=6, mid_channel=16)
 
     print("##", cfg_fname)
@@ -370,6 +370,6 @@ if __name__ == "__main__":
     )
     print(eng)
     if args.test:
-        eng.test("")
+        eng.test()
     else:
         eng.fit()

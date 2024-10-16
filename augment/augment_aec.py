@@ -1,6 +1,6 @@
 import sys
 from pathlib import Path
-from common.augment_mp import main_aug
+from augment_mp import main_aug
 
 sys.path.append(str(Path(__file__).parent.parent))
 

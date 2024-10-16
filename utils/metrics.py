@@ -7,9 +7,90 @@ from pystoi import stoi
 from typing import Callable, Dict, List, Optional, Union
 
 
+# def l2_norm(s, keepdim=False):
+#     """
+#     return: sqrt(|vec| * 2)
+#     """
+#     return torch.linalg.norm(s, dim=-1, keepdim=keepdim)
+
+
 def l2_norm(s, keepdim=False):
-    # sqrt(|vec| * 2) value
-    return torch.linalg.norm(s, dim=-1, keepdim=keepdim)
+    """
+    return: sqrt(|vec| * 2)
+    """
+    return np.linalg.norm(s, axis=-1, keepdims=keepdim)
+
+
+# def compute_si_snr(
+#     sph: Union[torch.Tensor, np.ndarray],
+#     est: Union[torch.Tensor, np.ndarray],
+#     zero_mean=True,
+# ):
+#     """torch-based
+#     s1 is the est signal, s2 represent for clean speech
+#     """
+#     is_numpy = False
+#     if isinstance(sph, np.ndarray) or isinstance(est, np.ndarray):
+#         sph = torch.from_numpy(sph)
+#         est = torch.from_numpy(est)
+#         is_numpy = True
+
+#     eps = torch.finfo(sph.dtype).eps
+
+#     if zero_mean is True:
+#         s = sph - torch.mean(sph, dim=-1, keepdim=True)
+#         s_hat = est - torch.mean(est, dim=-1, keepdim=True)
+#     else:
+#         s = sph
+#         s_hat = est
+
+#     s_target = (
+#         (torch.sum(s_hat * s, dim=-1, keepdim=True) + eps)
+#         * s
+#         / (l2_norm(s, keepdim=True) ** 2 + eps)
+#     )
+#     e_noise = s_hat - s_target
+#     # sisnr = 10 * torch.log10(
+#     #     (l2_norm(s_target) ** 2 + eps) / (l2_norm(e_noise) ** 2 + eps)
+#     # )
+#     sisnr = 10 * torch.log10(
+#         (torch.sum(s_target**2, dim=-1) + eps)
+#         / (torch.sum(e_noise**2, dim=-1) + eps)
+#     )
+#     return sisnr.cpu().detach().numpy() if is_numpy else sisnr
+
+
+def compute_si_snr(
+    sph: np.ndarray,
+    est: np.ndarray,
+    zero_mean=True,
+):
+    """numpy-based
+    s1 is the est signal, s2 represent for clean speech
+    """
+
+    eps = np.finfo(sph.dtype).eps
+
+    if zero_mean is True:
+        s = sph - sph.mean(axis=-1, keepdims=True)
+        s_hat = est - est.mean(axis=-1, keepdims=True)
+    else:
+        s = sph
+        s_hat = est
+
+    s_target = (
+        (np.sum(s_hat * s, axis=-1, keepdims=True) + eps)
+        * s
+        / (l2_norm(s, keepdim=True) ** 2 + eps)
+    )
+    e_noise = s_hat - s_target
+    # sisnr = 10 * torch.log10(
+    #     (l2_norm(s_target) ** 2 + eps) / (l2_norm(e_noise) ** 2 + eps)
+    # )
+    sisnr = 10 * np.log10(
+        (np.sum(s_target**2, axis=-1) + eps) / (np.sum(e_noise**2, axis=-1) + eps)
+    )
+    return sisnr
 
 
 def compute_snr(
@@ -22,10 +103,14 @@ def compute_snr(
     """
     is_torch = False
     if isinstance(sph, torch.Tensor):
-        sph = sph.cpu().numpy()
-        est = est.cpu().numpy()
+        sph = sph.cpu().detach().numpy()
         is_torch = True
 
+    if isinstance(est, torch.Tensor):
+        est = est.cpu().detach().numpy()
+        is_torch = True
+
+    assert isinstance(sph, np.ndarray) and isinstance(est, np.ndarray)
     eps = np.finfo(sph.dtype).eps
     if zero_mean is True:
         s = sph - sph.mean(axis=-1, keepdims=True)
@@ -34,49 +119,10 @@ def compute_snr(
         s = sph
         e = est  # B,T
 
-    diff = np.sum((s - e) ** 2, axis=-1, keepdims=True)
-    s = np.sum(s**2, axis=-1, keepdims=True)
+    diff = np.sum((s - e) ** 2, axis=-1)
+    s = np.sum(s**2, axis=-1)
     snr_sc = 10 * np.log10((s + eps) / (diff + eps))
     return snr_sc if is_torch is False else torch.from_numpy(snr_sc)
-
-
-def compute_si_snr(
-    sph: Union[torch.Tensor, np.ndarray],
-    est: Union[torch.Tensor, np.ndarray],
-    zero_mean=True,
-):
-    """torch-based
-    s1 is the est signal, s2 represent for clean speech
-    """
-    is_numpy = False
-    if isinstance(sph, np.ndarray) or isinstance(est, np.ndarray):
-        sph = torch.from_numpy(sph)
-        est = torch.from_numpy(est)
-        is_numpy = True
-
-    eps = torch.finfo(sph.dtype).eps
-
-    if zero_mean is True:
-        s = sph - torch.mean(sph, dim=-1, keepdim=True)
-        s_hat = est - torch.mean(est, dim=-1, keepdim=True)
-    else:
-        s = sph
-        s_hat = est
-
-    s_target = (
-        (torch.sum(s_hat * s, dim=-1, keepdim=True) + eps)
-        * s
-        / (l2_norm(s, keepdim=True) ** 2 + eps)
-    )
-    e_noise = s_hat - s_target
-    # sisnr = 10 * torch.log10(
-    #     (l2_norm(s_target) ** 2 + eps) / (l2_norm(e_noise) ** 2 + eps)
-    # )
-    sisnr = 10 * torch.log10(
-        (torch.sum(s_target**2, dim=-1) + eps)
-        / (torch.sum(e_noise**2, dim=-1) + eps)
-    )
-    return sisnr.cpu().detach().numpy() if is_numpy else sisnr
 
 
 def compute_erle(mic, est):
@@ -95,9 +141,7 @@ def compute_erle(mic, est):
     return erle_score
 
 
-def compute_pesq(
-    lbl: np.ndarray, est: np.ndarray, fs=16000, norm=False, mode: str = "wb"
-):
+def compute_pesq(lbl: np.ndarray, est: np.ndarray, fs=16000, norm=False, mode: str = "wb"):
     """numpy-based
 
     Args:

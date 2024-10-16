@@ -54,7 +54,9 @@ def prepare_data_iterator(data_in, input_len=None, data_type=None, key=None):
             with open(data_in, encoding="utf-8") as fin:
                 for line in fin:
                     key = "rand_key_" + "".join(random.choice(chars) for _ in range(13))
-                    if data_in.endswith(".jsonl"):  # file.jsonl: json.dumps({"source": data})
+                    if data_in.endswith(
+                        ".jsonl"
+                    ):  # file.jsonl: json.dumps({"source": data})
                         lines = json.loads(line.strip())
                         data = lines["source"]
                         key = data["key"] if "key" in data else key
@@ -72,7 +74,9 @@ def prepare_data_iterator(data_in, input_len=None, data_type=None, key=None):
             data_list = [data_in]
             key_list = [key]
     elif isinstance(data_in, (list, tuple)):
-        if data_type is not None and isinstance(data_type, (list, tuple)):  # mutiple inputs
+        if data_type is not None and isinstance(
+            data_type, (list, tuple)
+        ):  # mutiple inputs
             data_list_tmp = []
             for data_in_i, data_type_i in zip(data_in, data_type):
                 key_list, data_list_i = prepare_data_iterator(
@@ -105,9 +109,7 @@ def prepare_data_iterator(data_in, input_len=None, data_type=None, key=None):
 
 
 class AutoModel:
-
     def __init__(self, **kwargs):
-
         log_level = getattr(logging, kwargs.get("log_level", "INFO").upper())
         logging.basicConfig(level=log_level)
 
@@ -118,7 +120,9 @@ class AutoModel:
 
         # if vad_model is not None, build vad model else None
         vad_model = kwargs.get("vad_model", None)
-        vad_kwargs = {} if kwargs.get("vad_kwargs", {}) is None else kwargs.get("vad_kwargs", {})
+        vad_kwargs = (
+            {} if kwargs.get("vad_kwargs", {}) is None else kwargs.get("vad_kwargs", {})
+        )
         if vad_model is not None:
             logging.info("Building VAD model.")
             vad_kwargs["model"] = vad_model
@@ -128,7 +132,11 @@ class AutoModel:
 
         # if punc_model is not None, build punc model else None
         punc_model = kwargs.get("punc_model", None)
-        punc_kwargs = {} if kwargs.get("punc_kwargs", {}) is None else kwargs.get("punc_kwargs", {})
+        punc_kwargs = (
+            {}
+            if kwargs.get("punc_kwargs", {}) is None
+            else kwargs.get("punc_kwargs", {})
+        )
         if punc_model is not None:
             logging.info("Building punc model.")
             punc_kwargs["model"] = punc_model
@@ -138,7 +146,9 @@ class AutoModel:
 
         # if spk_model is not None, build spk model else None
         spk_model = kwargs.get("spk_model", None)
-        spk_kwargs = {} if kwargs.get("spk_kwargs", {}) is None else kwargs.get("spk_kwargs", {})
+        spk_kwargs = (
+            {} if kwargs.get("spk_kwargs", {}) is None else kwargs.get("spk_kwargs", {})
+        )
         if spk_model is not None:
             logging.info("Building SPK model.")
             spk_kwargs["model"] = spk_model
@@ -148,7 +158,9 @@ class AutoModel:
             self.cb_model = ClusterBackend().to(kwargs["device"])
             spk_mode = kwargs.get("spk_mode", "punc_segment")
             if spk_mode not in ["default", "vad_segment", "punc_segment"]:
-                logging.error("spk_mode should be one of default, vad_segment and punc_segment.")
+                logging.error(
+                    "spk_mode should be one of default, vad_segment and punc_segment."
+                )
             self.spk_mode = spk_mode
 
         self.kwargs = kwargs
@@ -164,7 +176,9 @@ class AutoModel:
     def build_model(self, **kwargs):
         assert "model" in kwargs
         if "model_conf" not in kwargs:
-            logging.info("download models from model hub: {}".format(kwargs.get("hub", "ms")))
+            logging.info(
+                "download models from model hub: {}".format(kwargs.get("hub", "ms"))
+            )
             kwargs = download_model(**kwargs)
 
         set_all_random_seed(kwargs.get("seed", 0))
@@ -177,18 +191,24 @@ class AutoModel:
 
         torch.set_num_threads(kwargs.get("ncpu", 4))
 
+        print("##", kwargs.get("tokenizer"))
         # build tokenizer
         tokenizer = kwargs.get("tokenizer", None)
         if tokenizer is not None:
             tokenizer_class = tables.tokenizer_classes.get(tokenizer)
+            print("@@", tokenizer_class)
             tokenizer = tokenizer_class(**kwargs.get("tokenizer_conf", {}))
             kwargs["token_list"] = (
                 tokenizer.token_list if hasattr(tokenizer, "token_list") else None
             )
             kwargs["token_list"] = (
-                tokenizer.get_vocab() if hasattr(tokenizer, "get_vocab") else kwargs["token_list"]
+                tokenizer.get_vocab()
+                if hasattr(tokenizer, "get_vocab")
+                else kwargs["token_list"]
             )
-            vocab_size = len(kwargs["token_list"]) if kwargs["token_list"] is not None else -1
+            vocab_size = (
+                len(kwargs["token_list"]) if kwargs["token_list"] is not None else -1
+            )
             if vocab_size == -1 and hasattr(tokenizer, "get_vocab_size"):
                 vocab_size = tokenizer.get_vocab_size()
         else:
@@ -206,6 +226,7 @@ class AutoModel:
             )
         kwargs["frontend"] = frontend
         # build model
+        print("#", tables.model_classes.get(kwargs["model"]))
         model_class = tables.model_classes.get(kwargs["model"])
         model_conf = {}
         deep_update(model_conf, kwargs.get("model_conf", {}))
@@ -247,7 +268,9 @@ class AutoModel:
         else:
             return self.inference_with_vad(input, input_len=input_len, **cfg)
 
-    def inference(self, input, input_len=None, model=None, kwargs=None, key=None, **cfg):
+    def inference(
+        self, input, input_len=None, model=None, kwargs=None, key=None, **cfg
+    ):
         kwargs = self.kwargs if kwargs is None else kwargs
         deep_update(kwargs, cfg)
         model = self.model if model is None else model
@@ -260,13 +283,16 @@ class AutoModel:
         key_list, data_list = prepare_data_iterator(
             input, input_len=input_len, data_type=kwargs.get("data_type", None), key=key
         )
+        print(key_list, data_list)
 
         speed_stats = {}
         asr_result_list = []
         num_samples = len(data_list)
         disable_pbar = self.kwargs.get("disable_pbar", False)
         pbar = (
-            tqdm(colour="blue", total=num_samples, dynamic_ncols=True) if not disable_pbar else None
+            tqdm(colour="blue", total=num_samples, dynamic_ncols=True)
+            if not disable_pbar
+            else None
         )
         time_speech_total = 0.0
         time_escape_total = 0.0
@@ -276,7 +302,9 @@ class AutoModel:
             key_batch = key_list[beg_idx:end_idx]
             batch = {"data_in": data_batch, "key": key_batch}
 
-            if (end_idx - beg_idx) == 1 and kwargs.get("data_type", None) == "fbank":  # fbank
+            if (end_idx - beg_idx) == 1 and kwargs.get(
+                "data_type", None
+            ) == "fbank":  # fbank
                 batch["data_in"] = data_batch[0]
                 batch["data_lengths"] = input_len
 
@@ -317,14 +345,20 @@ class AutoModel:
         deep_update(self.vad_kwargs, cfg)
         beg_vad = time.time()
         res = self.inference(
-            input, input_len=input_len, model=self.vad_model, kwargs=self.vad_kwargs, **cfg
+            input,
+            input_len=input_len,
+            model=self.vad_model,
+            kwargs=self.vad_kwargs,
+            **cfg,
         )
         end_vad = time.time()
 
         #  FIX(gcf): concat the vad clips for sense vocie model for better aed
         if kwargs.get("merge_vad", False):
             for i in range(len(res)):
-                res[i]["value"] = merge_vad(res[i]["value"], kwargs.get("merge_length", 15000))
+                res[i]["value"] = merge_vad(
+                    res[i]["value"], kwargs.get("merge_length", 15000)
+                )
 
         # step.2 compute asr model
         model = self.model
@@ -350,7 +384,9 @@ class AutoModel:
             vadsegments = res[i]["value"]
             input_i = data_list[i]
             fs = kwargs["frontend"].fs if hasattr(kwargs["frontend"], "fs") else 16000
-            speech = load_audio_text_image_video(input_i, fs=fs, audio_fs=kwargs.get("fs", 16000))
+            speech = load_audio_text_image_video(
+                input_i, fs=fs, audio_fs=kwargs.get("fs", 16000)
+            )
             speech_lengths = len(speech)
             n = len(vadsegments)
             data_with_index = [(vadsegments[i], i) for i in range(n)]
@@ -362,7 +398,9 @@ class AutoModel:
                 continue
 
             if len(sorted_data) > 0 and len(sorted_data[0]) > 0:
-                batch_size = max(batch_size, sorted_data[0][0][1] - sorted_data[0][0][0])
+                batch_size = max(
+                    batch_size, sorted_data[0][0][1] - sorted_data[0][0][0]
+                )
 
             beg_idx = 0
             beg_asr_total = time.time()
@@ -377,7 +415,9 @@ class AutoModel:
             for j, _ in enumerate(range(0, n)):
                 # pbar_sample.update(1)
                 sample_length = sorted_data[j][0][1] - sorted_data[j][0][0]
-                potential_batch_length = max(max_len_in_batch, sample_length) * (j + 1 - beg_idx)
+                potential_batch_length = max(max_len_in_batch, sample_length) * (
+                    j + 1 - beg_idx
+                )
                 # batch_size_ms_cum += sorted_data[j][0][1] - sorted_data[j][0][0]
                 if (
                     j < n - 1
@@ -408,7 +448,11 @@ class AutoModel:
                         all_segments.extend(segments)
                         speech_b = [i[2] for i in segments]
                         spk_res = self.inference(
-                            speech_b, input_len=None, model=self.spk_model, kwargs=kwargs, **cfg
+                            speech_b,
+                            input_len=None,
+                            model=self.spk_model,
+                            kwargs=kwargs,
+                            **cfg,
                         )
                         results[_b]["spk_embedding"] = spk_res[0]["spk_embedding"]
                 beg_idx = end_idx
@@ -446,7 +490,9 @@ class AutoModel:
                         if k not in result:
                             result[k] = restored_data[j][k]
                         else:
-                            result[k] = torch.cat([result[k], restored_data[j][k]], dim=0)
+                            result[k] = torch.cat(
+                                [result[k], restored_data[j][k]], dim=0
+                            )
                     elif "text" in k:
                         if k not in result:
                             result[k] = restored_data[j][k]
@@ -467,7 +513,10 @@ class AutoModel:
                 else:
                     deep_update(self.punc_kwargs, cfg)
                     punc_res = self.inference(
-                        result["text"], model=self.punc_model, kwargs=self.punc_kwargs, **cfg
+                        result["text"],
+                        model=self.punc_model,
+                        kwargs=self.punc_kwargs,
+                        **cfg,
                     )
                     raw_text = copy.copy(result["text"])
                     if return_raw_text:
@@ -580,9 +629,10 @@ class AutoModel:
         )
 
         with torch.no_grad():
-
             if type == "onnx":
-                export_dir = export_utils.export_onnx(model=model, data_in=data_list, **kwargs)
+                export_dir = export_utils.export_onnx(
+                    model=model, data_in=data_list, **kwargs
+                )
             else:
                 export_dir = export_utils.export_torchscripts(
                     model=model, data_in=data_list, **kwargs

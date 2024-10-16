@@ -1,0 +1,50 @@
+config:
+  name: 'mcse_3en_wdefu_wfafu_c72_B2'
+  # name: 'mcse_baseline+3en'
+  epochs: 70
+  desc: 'train the baseline without fatorized feature fusion'
+  info_dir: 'trained_mcse'
+  resume: true
+  optimizer: 'adam'
+  scheduler: 'stepLR'
+  valid_per_epoch: 1
+  vtest_per_epoch: 5 # 0 for disabled
+  ## the output dir to store the predict files of `vtest_dset` during testing
+  vtest_outdir: 'vtest'
+  dsets_raw_metrics: 'dset_metrics.json'
+
+
+chime:
+  train_dset: '/home/deepni/datasets/CHiME3'
+  valid_dset: '/home/deepni/datasets/CHiME3'
+  vtest_dset: '/home/deepni/datasets/CHiME3'
+  model_conf:
+    in_channels: 6
+    feature_size: 257
+    mid_channels: 72
+
+spdns:
+  train_dset: '/home/deepni/datasets/spatialReverbNoiseAlign/train_20'
+  valid_dset: '/home/deepni/datasets/spatialReverbNoiseAlign/valid'
+  vtest_dset: '/home/deepni/datasets/spatialReverbNoiseAlign/test'
+  model_conf:
+    in_channels: 8
+    feature_size: 257
+    mid_channels: 72
+
+l3das:
+  train_dset: '/home/deepni/datasets/l3das/L3DAS22_Task1_train100/data'
+  lbltr_dset: '/home/deepni/datasets/l3das/L3DAS22_Task1_train100/labels'
+  valid_dset: '/home/deepni/datasets/l3das/L3DAS22_Task1_dev/data'
+  lblva_dset: '/home/deepni/datasets/l3das/L3DAS22_Task1_dev/labels'
+  vtest_dset: '/home/deepni/datasets/l3das/L3DAS22_Task1_dev/data_val'
+  lblvt_dset: '/home/deepni/datasets/l3das/L3DAS22_Task1_dev/labels_val'
+  model_conf:
+    in_channels: 4
+    feature_size: 257
+    mid_channels: 72
+
+reverb:
+  train_dset: '/home/deepni/datasets/REVERB_WSJCAM0_tr'
+  valid_dset: '/home/deepni/datasets/REVERB_WSJCAM0_dt'
+  vtest_dset: '/home/deepni/datasets/REVERB_WSJCAM0_et'

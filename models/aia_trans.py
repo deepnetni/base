@@ -514,7 +514,6 @@ class dense_decoder_pwc(nn.Module):
         self, in_channels: int, out_channels: int, feature_size: int, depth: int = 4
     ):
         super(dense_decoder_pwc, self).__init__()
-        self.out_channels = 1
         self.in_channels = in_channels
         self.dec_dense = DenseBlockPWC(
             depth=depth, in_channels=in_channels, input_size=feature_size
@@ -1539,6 +1538,105 @@ class DF_AIA_TRANS_AE(nn.Module):
         return out_wav
 
 
+class AIA_TRANS(nn.Module):
+    def __init__(
+        self,
+        in_channels: int,
+        feature_size: int,
+        mid_channels: int,
+        ref_channel: int = 4,
+    ):
+        super().__init__()
+        self.stft = STFT(512, 256)
+        self.en_ri = dense_encoder(
+            in_channels=in_channels * 2,
+            out_channels=mid_channels,
+            feature_size=feature_size,
+            depth=4,
+        )  # B, mid_c, T, F // 4
+
+        self.dual_trans = AIA_Transformer_cau(mid_channels, mid_channels, num_layers=4)
+        self.aham = AHAM(input_channel=mid_channels)
+        self.ref_channel = ref_channel
+        self.in_channels = in_channels
+
+        self.de1 = dense_decoder(
+            in_channels=mid_channels,
+            out_channels=1,
+            feature_size=feature_size // 4,
+            depth=4,
+        )
+        self.de2 = dense_decoder(
+            in_channels=mid_channels,
+            out_channels=1,
+            feature_size=feature_size // 4,
+            depth=4,
+        )
+
+        self.df_order = 5
+        self.df_bins = feature_size
+        self.DF_de = DF_dense_decoder(
+            mid_channels, feature_size // 4, 2 * self.df_order
+        )
+
+        self.df_op = DF(num_freqs=self.df_bins, frame_size=self.df_order, lookahead=0)
+
+        self.df_out_transform = DfOutputReshapeMF(self.df_order, self.df_bins)
+
+    def forward(self, x):
+        """
+        x: B,T,C
+        """
+        nB = x.size(0)
+        x = rearrange(x, "b t c-> (b c) t")
+        xk = self.stft.transform(x)
+        x = rearrange(xk, "(b m) c t f->b (c m) t f", b=nB)
+        # x_ = rearrange(xk, "(b m) c t f->b (m c) t f", b=nB)
+
+        # noisy_real = x[:, self.ref_channel, :, :]
+        # noisy_imag = x[:, self.ref_channel + self.in_channels, :, :]
+
+        # x_spf = self.en_spf(self.spf_alg(x_))
+        # ri components enconde+ aia_transformer
+        x_ri = self.en_ri(x)  # BCTF
+        # x_ri = x_ri * x_spf
+
+        # * FTLSTM
+        x_last, x_outputlist = self.dual_trans(x_ri)  # BCTF, #BCTFG
+        x_ri = self.aham(x_outputlist)  # BCTF
+
+        # real and imag decode
+        x_real = self.de1(x_ri)  # B,1,T,F
+        x_imag = self.de2(x_ri)  # B,1,T,F
+        # x_real, x_imag = x_.chunk(2, dim=1)
+        x_real = x_real.squeeze(dim=1)  # B,T,F
+        x_imag = x_imag.squeeze(dim=1)
+        # enh_real = noisy_real * x_real - noisy_imag * x_imag
+        # enh_imag = noisy_real * x_imag + noisy_imag * x_real
+
+        enhanced_D = torch.stack([x_real, x_imag], 3)  # B,T,F,2
+        enhanced_D = enhanced_D.unsqueeze(1)  # B,1,T,F,2
+
+        # DF coeffs decoder
+        df_coefs = self.DF_de(x_ri)  # BCTF
+        df_coefs = df_coefs.permute(0, 2, 3, 1)  # B,T,F,10
+        df_coefs = self.df_out_transform(df_coefs).contiguous()  # B,5,T,F,2
+
+        DF_spec = self.df_op(enhanced_D, df_coefs)  # B,1,T,F,2
+        DF_spec = DF_spec.squeeze(1)
+
+        DF_real = DF_spec[:, :, :, 0]
+        DF_imag = DF_spec[:, :, :, 1]
+
+        feat = torch.stack([DF_real, DF_imag], dim=1)  # B,2,T,F
+
+        out_wav = self.stft.inverse(feat)  # B, 1, T
+        out_wav = torch.squeeze(out_wav, 1)
+        out_wav = torch.clamp(out_wav, -1, 1)
+
+        return out_wav
+
+
 class DF_AIA_TRANS(nn.Module):
     def __init__(
         self,
@@ -2015,7 +2113,7 @@ if __name__ == "__main__":
     # print(str(real.shape))
     input_test = torch.FloatTensor(1, 16000, 6)  # B,T,M
     flops, params = profile(model, inputs=(input_test,))
-    print("FLOPs=", str(flops / 1e9) + "{}".format("G"))
+    print(f"FLOPs={flops / 1e9}, params={params/1e6:.2f}")
 
     out = model(input_test)
     print(out.shape)

@@ -4,6 +4,36 @@ import sys
 import time
 
 
+class CPrint(object):
+    def __init__(self) -> None:
+        pass
+
+    def u(self, ctx: str):
+        """underline"""
+        print("\033[4m" + ctx + "\033[0m")
+
+    def r(self, ctx: str):
+        print("\033[31m" + ctx + "\033[0m")
+
+    def g(self, ctx: str):
+        print("\033[32m" + ctx + "\033[0m")
+
+    def y(self, ctx: str):
+        print("\033[33m" + ctx + "\033[0m")
+
+    def b(self, ctx: str):
+        print("\033[34m" + ctx + "\033[0m")
+
+    def h(self, ctx: str):
+        print("\033[35m" + ctx + "\033[0m")
+
+    def q(self, ctx: str):
+        print("\033[36m" + ctx + "\033[0m")
+
+    def w(self, ctx: str):
+        print("\033[37m" + ctx + "\033[0m")
+
+
 def get_logger(
     name,
     mode="console",
@@ -25,7 +55,8 @@ def get_logger(
         logger = getLogger(name)
         logger.info(...)
 
-        2. writer to dirname/file
+        2. writer to dirname/logs/YYMMDD-hhmmss.log
+        logger = getLogger(name, "file")
         logger = getLogger(name, "file", dirname)
         logger.info(...)
     """
@@ -51,8 +82,17 @@ def get_logger(
         handler = logging.FileHandler(filename)
     elif mode == "console":
         handler = logging.StreamHandler(sys.stdout)
+    else:
+        raise RuntimeError(f"{mode} not supported.")
 
     handler.setFormatter(fmt)
     logger.addHandler(handler)
 
     return logger
+
+
+if __name__ == "__main__":
+    pt = CPrint()
+    pt.q("heelo")
+    pt.h("heelo")
+    pt.u("heelo")
