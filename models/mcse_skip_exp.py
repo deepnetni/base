@@ -17,6 +17,8 @@ from models.aia_trans import (
     DfOutputReshapeMF,
     SPConvTranspose2d,
 )
+from models.CMGAN.conformer import ConformerBlock
+from models.CMGAN.generator import TSCB
 from models.SpatialFeatures import SpatialFeats
 from models.conv_stft import STFT
 from models.multiframe import DF
@@ -24,6 +26,7 @@ from models.Fusion.ms_cam import AFF
 from models.FTConformer import FConformer, FTConformer, TConformerConv, TConformerQKV
 from models.ft_lstm import FTLSTM_RESNET
 from models.DConvs import DConvBLK
+from models.ft_lstm import FTLSTM_RESNET_Train
 
 from models.FactorizedAttention import FactorizedAttn
 from utils.register import tables
@@ -126,7 +129,7 @@ class MMEBLK(nn.Module):
     Input: B,(CM),T,F
     """
 
-    def __init__(self, in_channels, out_channels, ndim, n_mic=6) -> None:
+    def __init__(self, in_channels, out_channels, ndim, n_mic=6, cau=True) -> None:
         super().__init__()
 
         n_mic = in_channels // 2
@@ -155,7 +158,7 @@ class MMEBLK(nn.Module):
         )
 
         self.aff = AFF(out_channels, ndim, r=1)
-        self.attn = TConformerQKV(out_channels, 4, r=2)
+        self.attn = TConformerQKV(out_channels, 4, r=2, causal=cau)
 
     def forward(self, x):
         xch = self.en_ch(x)
@@ -825,6 +828,38 @@ class DownSample(nn.Module):
         return x
 
 
+class UpSample_check(nn.Module):
+    def __init__(self, in_channels, feat_size) -> None:
+        super().__init__()
+        self.us_conv = nn.Sequential(
+            nn.ConstantPad2d((1, 1, 0, 0), value=0.0),  # padding F
+            SPConvTranspose2d(
+                in_channels=in_channels,
+                out_channels=in_channels,
+                kernel_size=(1, 3),
+                r=2,
+            ),  # F//4 => F//2, (f+2-2) * 2
+            nn.LayerNorm(feat_size * 2),
+            nn.PReLU(in_channels),
+            #
+            nn.ConstantPad2d((1, 1, 0, 0), value=0.0),
+            SPConvTranspose2d(
+                in_channels=in_channels,
+                out_channels=in_channels,
+                kernel_size=(1, 3),
+                r=2,
+            ),
+            nn.ConstantPad2d((1, 1, 0, 0), value=0.0),
+            nn.Conv2d(in_channels, in_channels, (1, 2)),
+            nn.LayerNorm(feat_size * 4 + 1),
+            nn.PReLU(in_channels),
+        )
+
+    def forward(self, x):
+        x = self.us_conv(x)
+        return x
+
+
 class UpSample(nn.Module):
     def __init__(self, in_channels, feat_size) -> None:
         super().__init__()
@@ -835,7 +870,7 @@ class UpSample(nn.Module):
                 out_channels=in_channels,
                 kernel_size=(1, 3),
                 r=2,
-            ),  # F//4 => F//2
+            ),  # F//4 => F//2, (f+2-2) * 2
             nn.LayerNorm(feat_size * 2),
             nn.PReLU(in_channels),
             #
@@ -856,6 +891,105 @@ class UpSample(nn.Module):
         return x
 
 
+class DownSample_check(nn.Module):
+    def __init__(self, in_channels, feat_size) -> None:
+        super().__init__()
+        self.ds_conv = nn.Sequential(
+            nn.Conv2d(
+                in_channels=in_channels,
+                out_channels=in_channels,
+                kernel_size=(1, 3),
+                stride=(1, 2),  # //2
+                padding=(0, 1),
+            ),
+            Rearrange("b c t f->b t f c"),
+            nn.LayerNorm(in_channels),
+            Rearrange("b t f c->b c t f"),
+            nn.PReLU(in_channels),
+            nn.Conv2d(
+                in_channels=in_channels,
+                out_channels=in_channels,
+                kernel_size=(1, 3),
+                stride=(1, 2),  # no padding
+                padding=(0, 1),
+            ),
+            Rearrange("b c t f->b t f c"),
+            nn.LayerNorm(in_channels),
+            Rearrange("b t f c->b c t f"),
+            nn.PReLU(in_channels),
+        )
+
+    def forward(self, x):
+        x = self.ds_conv(x)
+        return x
+
+
+# class UpSample_check(nn.Module):
+#     def __init__(self, in_channels, feat_size) -> None:
+#         super().__init__()
+#         self.us_conv = nn.Sequential(
+#             nn.ConvTranspose2d(in_channels, in_channels, (1, 3), (1, 2), (0, 1)),
+#             Rearrange("b c t f->b t f c"),
+#             nn.LayerNorm(in_channels),
+#             Rearrange("b t f c->b c t f"),
+#             # nn.BatchNorm2d(in_channels),
+#             nn.PReLU(),
+#             nn.ConvTranspose2d(in_channels, in_channels, (1, 3), (1, 2), (0, 1)),
+#             Rearrange("b c t f->b t f c"),
+#             nn.LayerNorm(in_channels),
+#             Rearrange("b t f c->b c t f"),
+#             # nn.BatchNorm2d(in_channels),
+#             nn.PReLU(),
+#             # Rearrange("b c t f -> b f t c"),
+#             # nn.Conv2d(
+#             #     in_channels=feat_size,
+#             #     out_channels=feat_size,
+#             #     kernel_size=(1, 1),
+#             #     padding=(0, 0),
+#             # ),
+#             # nn.LayerNorm(in_channels),
+#             # nn.PReLU(),
+#             # Rearrange("b f t c-> b c t f"),
+#         )
+
+#     def forward(self, x):
+#         x = self.us_conv(x)
+#         return x
+
+
+# class UpSample_check(nn.Module):
+#     def __init__(self, in_channels, feat_size) -> None:
+#         super().__init__()
+#         self.us_conv = nn.Sequential(
+#             nn.ConstantPad2d((1, 1, 0, 0), value=0.0),  # padding F
+#             SPConvTranspose2d(
+#                 in_channels=in_channels,
+#                 out_channels=in_channels,
+#                 kernel_size=(1, 3),
+#                 r=2,
+#             ),  # F//4 => F//2, (f+2-2) * 2
+#             nn.LayerNorm(feat_size * 2),
+#             nn.PReLU(in_channels),
+#             nn.Conv2d(in_channels, in_channels, (1, 2)),
+#             nn.PReLU(in_channels),
+#             #
+#             nn.ConstantPad2d((1, 1, 0, 0), value=0.0),
+#             SPConvTranspose2d(
+#                 in_channels=in_channels,
+#                 out_channels=in_channels,
+#                 kernel_size=(1, 3),
+#                 r=2,
+#             ),
+#             nn.LayerNorm(feat_size * 4 - 2),
+#             nn.PReLU(in_channels),
+#             nn.Conv2d(in_channels, in_channels, (1, 2)),
+#         )
+
+#     def forward(self, x):
+#         x = self.us_conv(x)
+#         return x
+
+
 @tables.register("models", "mcse_3en_all_aff_wdefu_wfafu_c72_B2")
 class aia_mcse_skip_sd_upch(nn.Module):
     """mcse_3en_all_aff_wdefu_wfafu
@@ -866,7 +1000,9 @@ class aia_mcse_skip_sd_upch(nn.Module):
         - mid_channels, `Cout`
     """
 
-    def __init__(self, in_channels: int, feature_size: int, mid_channels: int, n_mic:int=6, depth=4):
+    def __init__(
+        self, in_channels: int, feature_size: int, mid_channels: int, n_mic: int = 6, depth=4
+    ):
         super().__init__()
         self.stft = STFT(512, 256)
         self.up_ch = MMEBLK_ALL_AFF(in_channels * 2, mid_channels, feature_size, n_mic=n_mic)
@@ -999,10 +1135,10 @@ class aia_mcse_skip_sd_upch_att(nn.Module):
         - mid_channels, `Cout`
     """
 
-    def __init__(self, in_channels: int, feature_size: int, mid_channels: int, depth=4):
+    def __init__(self, in_channels: int, feature_size: int, mid_channels: int, n_mic=4, depth=4):
         super().__init__()
         self.stft = STFT(512, 256)
-        self.up_ch = MMEBLK_ALL_ATT(in_channels * 2, mid_channels, feature_size)
+        self.up_ch = MMEBLK_ALL_ATT(in_channels * 2, mid_channels, feature_size, n_mic=n_mic)
         # self.up_ch = nn.Sequential(
         #     nn.Conv2d(in_channels * 2, mid_channels, (1, 1), (1, 1), (0, 0)),
         #     nn.LayerNorm(feature_size),
@@ -1108,6 +1244,462 @@ class aia_mcse_skip_sd_upch_att(nn.Module):
 
         x_enh = self.fa(x_enh, en_skip)
         x_enh = self.fu(x_enh)
+        # x_enh = rearrange(x_enh, "b c t f->b 1 t f c").contiguous()
+        # df_spec = self.df_op(x_enh, df_coefs)  # B,1,T,F,2
+        # feat = rearrange(df_spec, "b 1 t f c->b c t f")
+
+        # x_chri = self.chri_de(en_ch, en_ri)
+        # feat = self.attn(x_chri, x_enh, x_enh)
+        feat = x_enh
+
+        feat = self.out_conv(feat)
+        out_wav = self.stft.inverse(feat)  # B, T
+
+        return out_wav
+
+
+@tables.register("models", "mcse_conformer")
+class aia_mcse_skip_conformer(nn.Module):
+    """
+    Inputs: B,C,T,F
+    Args:
+        - in_channels, `C`
+        - feature_size, `F`
+        - mid_channels, `Cout`
+    """
+
+    def __init__(self, in_channels: int, feature_size: int, mid_channels: int, depth=4, **kwargs):
+        super().__init__()
+        self.stft = STFT(512, 256)
+        self.up_ch = nn.Sequential(
+            nn.Conv2d(in_channels * 2, mid_channels, (1, 1), (1, 1), (0, 0)),
+            nn.LayerNorm(feature_size),
+            nn.PReLU(mid_channels),
+        )
+
+        self.encode = EncoderBaseline(
+            in_channels=mid_channels,
+            feat_size=feature_size,
+            return_steps=True,
+            depth=depth,
+        )
+
+        self.mid = nn.Sequential(
+            *[TSCB(mid_channels) for _ in range(4)],
+        )
+
+        self.decode = DecoderBaseline(
+            in_channels=mid_channels,
+            feat_size=feature_size,
+            depth=depth,
+        )
+
+        self.out_conv = nn.Conv2d(
+            in_channels=mid_channels,
+            out_channels=2,
+            kernel_size=(1, 5),
+            padding=(0, 2),
+        )
+
+    def forward(self, x):
+        """
+        x: B,T,C
+        """
+        nB = x.size(0)
+        x = rearrange(x, "b t c-> (b c) t")
+        xk = self.stft.transform(x)
+        x = rearrange(xk, "(b m) c t f->b (c m) t f", b=nB)
+
+        x = self.up_ch(x)
+        x_ri, en_skip = self.encode(x)  # BCTF
+
+        x_ri = self.mid(x_ri)
+
+        x_enh = self.decode(x_ri, None)  # B,1,T,F
+
+        # x_enh = self.fa(x_enh, en_skip)
+        # x_enh = self.fu(x_enh)
+
+        # x_enh = rearrange(x_enh, "b c t f->b 1 t f c").contiguous()
+        # df_spec = self.df_op(x_enh, df_coefs)  # B,1,T,F,2
+        # feat = rearrange(df_spec, "b 1 t f c->b c t f")
+
+        # x_chri = self.chri_de(en_ch, en_ri)
+        # feat = self.attn(x_chri, x_enh, x_enh)
+        feat = x_enh
+
+        feat = self.out_conv(feat)
+        out_wav = self.stft.inverse(feat)  # B, T
+
+        return out_wav
+
+
+class RNN_FC(nn.Module):
+    """
+    feature_size: F of b,c,f,t
+    """
+
+    def __init__(
+        self,
+        input_size: int,
+        output_size: int,
+        hidden_size: int,
+        num_layers: int,
+        bidirectional: bool = False,
+        act: bool = True,
+    ):
+        super().__init__()
+        # Sequence layer
+        self.sequence_model = nn.LSTM(
+            input_size=input_size,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            batch_first=True,
+            bidirectional=bidirectional,
+        )
+        self.sequence_model.flatten_parameters()
+
+        # Fully connected layer
+
+        if bidirectional:
+            self.fc_output_layer = nn.Linear(hidden_size * 2, output_size)
+        else:
+            self.fc_output_layer = nn.Linear(hidden_size, output_size)
+
+        self.act = nn.ReLU() if act else nn.Identity()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: [B, T, Feature]
+        Returns:
+            [B, T, Feature]
+        """
+        x, _ = self.sequence_model(x)
+        x = self.act(self.fc_output_layer(x))
+
+        return x
+
+
+@tables.register("models", "mcse_baseline_bb_de_postpwc")
+class aia_mcse_skip_baseline_bb_de_postpwc(nn.Module):
+    """
+    Inputs: B,C,T,F
+    Args:
+        - in_channels, `C`
+        - feature_size, `F`
+        - mid_channels, `Cout`
+    """
+
+    def __init__(self, in_channels: int, feature_size: int, mid_channels: int, depth=4, **kwargs):
+        super().__init__()
+        self.stft = STFT(512, 256)
+        self.up_ch = nn.Sequential(
+            nn.Conv2d(in_channels * 2, mid_channels, (1, 1), (1, 1), (0, 0)),
+            nn.LayerNorm(feature_size),
+            nn.PReLU(mid_channels),
+        )
+
+        self.encode = EncoderBaseline(
+            in_channels=mid_channels,
+            feat_size=feature_size,
+            return_steps=True,
+            depth=depth,
+        )
+
+        self.dsLayer = DownSample_check(mid_channels, feature_size)
+        self.usLayer = UpSample_check(mid_channels, feature_size // 4 + 1)
+        # self.usLayer = nn.Sequential(
+        #     nn.Linear(feature_size // 4 + 1, feature_size),
+        #     Rearrange("b c t f->b t c f"),
+        #     nn.LayerNorm([mid_channels, feature_size]),
+        #     Rearrange("b t c f->b c t f"),
+        #     nn.PReLU(),
+        # )
+
+        # self.dual_trans = AIA_Transformer(mid_channels, mid_channels, num_layers=4)
+        # self.aham = AHAM(input_channel=mid_channels)
+        self.rnns = nn.Sequential(
+            FTLSTM_RESNET_Train(mid_channels, 128),
+            FTLSTM_RESNET_Train(mid_channels, 128),
+        )
+
+        self.decode = DecoderBaseline(
+            in_channels=mid_channels,
+            feat_size=feature_size // 4 + 1,
+            # feat_size=feature_size,
+            depth=depth,
+        )
+
+        self.out_conv = nn.Sequential(
+            # Rearrange("b c t f -> b f t c"),
+            # nn.Conv2d(
+            #     in_channels=feature_size,
+            #     out_channels=feature_size,
+            #     kernel_size=(1, 1),
+            #     padding=(0, 0),
+            # ),
+            # nn.LayerNorm(mid_channels),
+            # nn.PReLU(),
+            # Rearrange("b f t c-> b c t f"),
+            nn.Conv2d(
+                in_channels=mid_channels,
+                out_channels=2,
+                kernel_size=(1, 1),
+            ),
+            # nn.BatchNorm2d(2),
+            # Rearrange("b c t f -> b f t c"),
+            # nn.PReLU(),
+            # nn.Conv2d(
+            #     in_channels=feature_size,
+            #     out_channels=feature_size,
+            #     kernel_size=(1, 1),
+            #     padding=(0, 0),
+            # ),
+            # Rearrange("b f t c-> b c t f"),
+        )
+        # bxt,f,c
+        # self.out_conv = RNN_FC(
+        #     input_size=mid_channels,
+        #     hidden_size=128,
+        #     output_size=2,
+        #     num_layers=1,
+        #     bidirectional=True,
+        #     act=False,
+        # )
+
+    def forward(self, x):
+        """
+        x: B,T,C
+        """
+        nB = x.size(0)
+        x = rearrange(x, "b t c-> (b c) t")
+        xk = self.stft.transform(x)
+        x = rearrange(xk, "(b m) c t f->b (c m) t f", b=nB)
+
+        x = self.up_ch(x)
+
+        x_ri, _ = self.encode(x)  # BCTF
+        x_ri = self.dsLayer(x)
+
+        # x_ = rearrange(xk, "(b m) c t f->b (m c) t f", b=nB)
+        # x_spf = self.en_spf(self.spf_alg(x_))
+        # x_ri = x_ri * x_spf
+
+        x_ri = self.rnns(x_ri)
+        # _, x_outputlist = self.dual_trans(x_ri)  # BCTF, #BCTFG
+        # x_ri = self.aham(x_outputlist)  # BCTF
+
+        # DF coeffs decoder
+        # df_coefs = self.DF_de(x_ri)  # BCTF
+        # df_coefs = df_coefs.permute(0, 2, 3, 1)  # B,T,F,10
+        # df_coefs = self.df_out_transform(df_coefs).contiguous()  # B,5,T,F,2
+
+        x_ri = self.decode(x_ri, None)  # B,1,T,F
+        x_ri = self.usLayer(x_ri)
+
+        # x_enh = self.fa(x_enh, en_skip)
+        # x_enh = self.fu(x_enh)
+
+        # x_enh = rearrange(x_enh, "b c t f->b 1 t f c").contiguous()
+        # df_spec = self.df_op(x_enh, df_coefs)  # B,1,T,F,2
+        # feat = rearrange(df_spec, "b 1 t f c->b c t f")
+
+        # x_chri = self.chri_de(en_ch, en_ri)
+        # feat = self.attn(x_chri, x_enh, x_enh)
+        feat = x_ri
+
+        # feat = rearrange(feat, "b c t f->(b t) f c")
+        feat = self.out_conv(feat)
+        # feat = rearrange(feat, "(b t) f c->b c t f", b=nB)
+        out_wav = self.stft.inverse(feat)  # B, T
+
+        return out_wav
+
+
+@tables.register("models", "mcse_baseline_bb_postpwc")
+class aia_mcse_skip_baseline_bb_postpwc(nn.Module):
+    """
+    Inputs: B,C,T,F
+    Args:
+        - in_channels, `C`
+        - feature_size, `F`
+        - mid_channels, `Cout`
+    """
+
+    def __init__(self, in_channels: int, feature_size: int, mid_channels: int, depth=4, **kwargs):
+        super().__init__()
+        self.stft = STFT(512, 256)
+        self.up_ch = nn.Sequential(
+            nn.Conv2d(in_channels * 2, mid_channels, (1, 1), (1, 1), (0, 0)),
+            nn.LayerNorm(feature_size),
+            nn.PReLU(mid_channels),
+        )
+
+        self.encode = EncoderBaseline(
+            in_channels=mid_channels,
+            feat_size=feature_size,
+            return_steps=True,
+            depth=depth,
+        )
+
+        self.dsLayer = DownSample(mid_channels, feature_size)
+        self.usLayer = UpSample(mid_channels, feature_size // 4)
+
+        # self.dual_trans = AIA_Transformer(mid_channels, mid_channels, num_layers=4)
+        # self.aham = AHAM(input_channel=mid_channels)
+        self.rnns = nn.Sequential(
+            FTLSTM_RESNET_Train(mid_channels, 128),
+            FTLSTM_RESNET_Train(mid_channels, 128),
+        )
+
+        self.decode = DecoderBaseline(
+            in_channels=mid_channels,
+            feat_size=feature_size,
+            depth=depth,
+        )
+
+        self.out_conv = nn.Conv2d(
+            in_channels=mid_channels,
+            out_channels=2,
+            kernel_size=(1, 1),
+            padding=(0, 0),
+        )
+        # bxt,f,c
+        # self.out_conv = RNN_FC(
+        #     input_size=mid_channels,
+        #     hidden_size=128,
+        #     output_size=2,
+        #     num_layers=1,
+        #     bidirectional=True,
+        #     act=False,
+        # )
+
+    def forward(self, x):
+        """
+        x: B,T,C
+        """
+        nB = x.size(0)
+        x = rearrange(x, "b t c-> (b c) t")
+        xk = self.stft.transform(x)
+        x = rearrange(xk, "(b m) c t f->b (c m) t f", b=nB)
+
+        x = self.up_ch(x)
+        x_ri, en_skip = self.encode(x)  # BCTF
+        x_ri = self.dsLayer(x)
+
+        # x_ = rearrange(xk, "(b m) c t f->b (m c) t f", b=nB)
+        # x_spf = self.en_spf(self.spf_alg(x_))
+        # x_ri = x_ri * x_spf
+
+        x_ri = self.rnns(x_ri)
+        # _, x_outputlist = self.dual_trans(x_ri)  # BCTF, #BCTFG
+        # x_ri = self.aham(x_outputlist)  # BCTF
+
+        # DF coeffs decoder
+        # df_coefs = self.DF_de(x_ri)  # BCTF
+        # df_coefs = df_coefs.permute(0, 2, 3, 1)  # B,T,F,10
+        # df_coefs = self.df_out_transform(df_coefs).contiguous()  # B,5,T,F,2
+
+        x_ri = self.usLayer(x_ri)
+        x_ri = self.decode(x_ri, None)  # B,1,T,F
+
+        # x_enh = self.fa(x_enh, en_skip)
+        # x_enh = self.fu(x_enh)
+
+        # x_enh = rearrange(x_enh, "b c t f->b 1 t f c").contiguous()
+        # df_spec = self.df_op(x_enh, df_coefs)  # B,1,T,F,2
+        # feat = rearrange(df_spec, "b 1 t f c->b c t f")
+
+        # x_chri = self.chri_de(en_ch, en_ri)
+        # feat = self.attn(x_chri, x_enh, x_enh)
+        feat = x_ri
+
+        # feat = rearrange(feat, "b c t f->(b t) f c")
+        feat = self.out_conv(feat)
+        # feat = rearrange(feat, "(b t) f c->b c t f", b=nB)
+        out_wav = self.stft.inverse(feat)  # B, T
+
+        return out_wav
+
+
+@tables.register("models", "mcse_baseline_2_postpwc")
+class aia_mcse_skip_baseline_postpwc(nn.Module):
+    """
+    Inputs: B,C,T,F
+    Args:
+        - in_channels, `C`
+        - feature_size, `F`
+        - mid_channels, `Cout`
+    """
+
+    def __init__(self, in_channels: int, feature_size: int, mid_channels: int, depth=4, **kwargs):
+        super().__init__()
+        self.stft = STFT(512, 256)
+        self.up_ch = nn.Sequential(
+            nn.Conv2d(in_channels * 2, mid_channels, (1, 1), (1, 1), (0, 0)),
+            nn.LayerNorm(feature_size),
+            nn.PReLU(mid_channels),
+        )
+
+        self.encode = EncoderBaseline(
+            in_channels=mid_channels,
+            feat_size=feature_size,
+            return_steps=True,
+            depth=depth,
+        )
+
+        self.dsLayer = DownSample(mid_channels, feature_size)
+        self.usLayer = UpSample_check(mid_channels, feature_size // 4)
+
+        self.dual_trans = AIA_Transformer(mid_channels, mid_channels, num_layers=4)
+        self.aham = AHAM(input_channel=mid_channels)
+
+        self.decode = DecoderBaseline(
+            in_channels=mid_channels,
+            feat_size=feature_size // 4,
+            depth=depth,
+        )
+
+        self.out_conv = nn.Conv2d(
+            in_channels=mid_channels,
+            out_channels=2,
+            kernel_size=(1, 1),
+            padding=(0, 0),
+        )
+
+    def forward(self, x):
+        """
+        x: B,T,C
+        """
+        nB = x.size(0)
+        x = rearrange(x, "b t c-> (b c) t")
+        xk = self.stft.transform(x)
+        x = rearrange(xk, "(b m) c t f->b (c m) t f", b=nB)
+
+        x = self.up_ch(x)
+        x_ri, _ = self.encode(x)  # BCTF
+        x_ri = self.dsLayer(x_ri)
+
+        # x_ = rearrange(xk, "(b m) c t f->b (m c) t f", b=nB)
+        # x_spf = self.en_spf(self.spf_alg(x_))
+        # x_ri = x_ri * x_spf
+
+        # x_ri = self.rnns(x_ri)
+        _, x_outputlist = self.dual_trans(x_ri)  # BCTF, #BCTFG
+        x_ri = self.aham(x_outputlist)  # BCTF
+
+        # DF coeffs decoder
+        # df_coefs = self.DF_de(x_ri)  # BCTF
+        # df_coefs = df_coefs.permute(0, 2, 3, 1)  # B,T,F,10
+        # df_coefs = self.df_out_transform(df_coefs).contiguous()  # B,5,T,F,2
+
+        x_enh = self.usLayer(x_ri)
+        x_ri = self.decode(x_ri, None)  # B,1,T,F
+
+        # x_enh = self.fa(x_enh, en_skip)
+        # x_enh = self.fu(x_enh)
+
         # x_enh = rearrange(x_enh, "b c t f->b 1 t f c").contiguous()
         # df_spec = self.df_op(x_enh, df_coefs)  # B,1,T,F,2
         # feat = rearrange(df_spec, "b 1 t f c->b c t f")
@@ -2205,6 +2797,110 @@ class aia_mcse_skip_sd(nn.Module):
         return out_wav
 
 
+@tables.register("models", "mcse_3en_wdefu_wfafu_c72_B2_uncau")
+class aia_mcse_skip_sd_2(nn.Module):
+    """mcse_3en_wdefu_wfafu
+    Inputs: B,C,T,F
+    Args:
+        - in_channels, `C`
+        - feature_size, `F`
+        - mid_channels, `Cout`
+    """
+
+    def __init__(self, in_channels: int, feature_size: int, mid_channels: int, depth=4, **kwargs):
+        super().__init__()
+        self.stft = STFT(512, 256)
+        self.up_ch = MMEBLK(in_channels * 2, mid_channels, feature_size, cau=False)
+
+        self.encode = EncoderATT(
+            in_channels=mid_channels,
+            feat_size=feature_size,
+            return_steps=True,
+            depth=depth,
+        )
+
+        self.dsLayer = DownSample(mid_channels, feature_size)
+        self.usLayer = UpSample(mid_channels, feature_size // 4)
+
+        self.dual_trans = AIA_Transformer(mid_channels, mid_channels, num_layers=4)
+        self.aham = AHAM(input_channel=mid_channels)
+
+        self.decode = Decoder(
+            in_channels=mid_channels,
+            feat_size=feature_size,
+            depth=depth,
+        )
+
+        self.fa = FactorizedAttn(mid_channels, nhead=8)
+        self.fu = nn.Sequential(
+            *[DConvBLK(mid_channels, feature_size, (2, 3), 2**i) for i in range(3)]
+        )
+
+        # self.chri_de = CHRIDecoder(mid_channels, feature_size, depth=1)
+        # self.attn = TConformerQKV(mid_channels, 4, r=2)
+
+        self.out_conv = nn.Conv2d(
+            in_channels=mid_channels,
+            out_channels=2,
+            kernel_size=(1, 5),
+            padding=(0, 2),
+        )
+
+        # self.df_order = 5
+        # self.df_bins = feature_size
+        # self.DF_de = DF_dense_decoder(
+        #     mid_channels, feature_size // 4, 2 * self.df_order
+        # )
+
+        # self.df_op = DF(num_freqs=self.df_bins, frame_size=self.df_order, lookahead=0)
+        # self.df_out_transform = DfOutputReshapeMF(self.df_order, self.df_bins)
+
+    def forward(self, x):
+        """
+        x: B,T,C
+        """
+        nB = x.size(0)
+        x = rearrange(x, "b t c-> (b c) t")
+        xk = self.stft.transform(x)
+        x = rearrange(xk, "(b m) c t f->b (c m) t f", b=nB)
+
+        x, en_ch, en_ri = self.up_ch(x)
+        # x = self.up_ch(x)
+        x_ri, en_skip = self.encode(x)  # BCTF
+        x_ri = self.dsLayer(x_ri)
+
+        # x_ = rearrange(xk, "(b m) c t f->b (m c) t f", b=nB)
+        # x_spf = self.en_spf(self.spf_alg(x_))
+        # x_ri = x_ri * x_spf
+
+        # x_ri = self.rnns(x_ri)
+        _, x_outputlist = self.dual_trans(x_ri)  # BCTF, #BCTFG
+        x_ri = self.aham(x_outputlist)  # BCTF
+
+        # DF coeffs decoder
+        # df_coefs = self.DF_de(x_ri)  # BCTF
+        # df_coefs = df_coefs.permute(0, 2, 3, 1)  # B,T,F,10
+        # df_coefs = self.df_out_transform(df_coefs).contiguous()  # B,5,T,F,2
+
+        x_ri = self.usLayer(x_ri)
+        x_enh = self.decode(x_ri, None)  # B,1,T,F
+
+        x_enh = self.fa(x_enh, en_skip)
+        x_enh = self.fu(x_enh)
+        # x_enh = rearrange(x_enh, "b c t f->b 1 t f c").contiguous()
+        # df_spec = self.df_op(x_enh, df_coefs)  # B,1,T,F,2
+        # feat = rearrange(df_spec, "b 1 t f c->b c t f")
+
+        # x_chri = self.chri_de(en_ch, en_ri)
+        # feat = self.attn(x_chri, x_enh, x_enh)
+        feat = x_enh
+
+        feat = self.out_conv(feat)
+        out_wav = self.stft.inverse(feat)  # B, T
+
+        return out_wav
+
+
 @tables.register("models", "mcse_3en_wdefu_wfafu_cau_c72_B2")
 class aia_mcse_skip_sd_cau(nn.Module):
     """mcse_3en_wdefu_wfafu
@@ -2446,7 +3142,13 @@ if __name__ == "__main__":
     from thop import profile
     import warnings
 
-    tables.print()
+    # tables.print()
+
+    inp = torch.randn(1, 10, 3, 33)
+    # net = SPConvTranspose2d(in_channels=10, out_channels=20, kernel_size=(1, 3), r=2)
+    net = UpSample_check(in_channels=10, feat_size=33)
+    out = net(inp)
+    print(out.shape)
 
     # net = MMEBLK(12, 24, 65)
     # inp = torch.randn(1, 12, 10, 65)
@@ -2457,10 +3159,11 @@ if __name__ == "__main__":
     # warnings.filterwarnings("ignore", category=DeprecationWarning)
 
     # ch must be multiply of 4,6,8; 24
-    model = aia_mcse_skip_sd_upch_att(in_channels=6, feature_size=257, mid_channels=72)  # C,F,C'
+    # model = aia_mcse_skip_sd_upch_att(in_channels=6, feature_size=257, mid_channels=72)  # C,F,C'
+    # model = aia_mcse_skip_conformer(in_channels=6, feature_size=257, mid_channels=72)  # C,F,C'
 
-    # model_ = tables.models.get("mcse_3en_all_att_wdefu_wfafu_c72_B2")
-    # model_ = model_(6, 257, 72)
+    model = tables.models.get("mcse_3en_wdefu_wfafu_c72_B2_uncau")
+    model = model(6, 257, 72)
 
     # model = mcse_skip_sd(in_channels=6, feature_size=257, mid_channels=72)  # C,F,C'
     input_test = torch.FloatTensor(1, 16000, 6)  # B,T,M

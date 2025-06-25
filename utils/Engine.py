@@ -62,11 +62,14 @@ class Engine(object):
         valid_first: bool = False,
         vtest_outdir: str = "vtest",
         dsets_raw_metrics: str = "",
+        basedir=None,
         **kwargs,
     ):
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self.name = name
         self.net = net.to(self.device)
+        self.fs = kwargs.get("fs", 16000)
+
         try:
             self.optimizer = self.config_optimizer()
         except NotImplementedError:
@@ -96,17 +99,19 @@ class Engine(object):
             )
         log.info(f"info dirname: {self.info_dir}")
 
-        self.ckpt_dir = self.info_dir / name / "checkpoints"
+        base_dir = self.name if basedir is None else basedir
+        self.ckpt_dir = self.info_dir / base_dir / "checkpoints"
         self.ckpt_file = self.ckpt_dir / "ckpt.pth"
         self.ckpt_best_file = self.ckpt_dir / "best.pth"
         self.valid_first = valid_first
         self.dsets_mfile = (
             self.info_dir / dsets_raw_metrics
             if dsets_raw_metrics != ""
-            else self.info_dir / name / "dset_metrics.json"
+            else self.info_dir / base_dir / "dset_metrics.json"
         )
 
         self.ckpt_dir.mkdir(parents=True, exist_ok=True)  # create directory if not exists
+        print(f"write to {self.info_dir}")
 
         if resume is True:
             self._load_ckpt() if self.ckpt_file.exists() else log.warning(
@@ -115,9 +120,11 @@ class Engine(object):
             self.resume = True if self.ckpt_file.exists() else False
 
         # tensorboard
-        self.tfb_dir = self.info_dir / name / "tfb"
+        self.tfb_dir = self.info_dir / base_dir / "tfb"
         self.writer = SummaryWriter(log_dir=self.tfb_dir.as_posix())
         self.writer.add_text("Description", desc, global_step=1)
+
+        self.epoch_pred_dir = self.info_dir / base_dir / "per_epoch"
 
     @staticmethod
     def _config_optimizer(name: str, params, **kwargs) -> Optimizer:
@@ -132,7 +139,7 @@ class Engine(object):
     @staticmethod
     def _config_scheduler(name: str, optimizer: Optimizer):
         supported = {
-            "stepLR": lambda p: lr_scheduler.StepLR(p, step_size=10, gamma=0.9),
+            "stepLR": lambda p: lr_scheduler.StepLR(p, step_size=20, gamma=0.8),
             "reduceLR": lambda p: lr_scheduler.ReduceLROnPlateau(
                 p, mode="min", factor=0.5, patience=1
             ),
@@ -305,14 +312,16 @@ class Engine(object):
         total, trainable, total_sz = self._net_info()
         content += "=" * 60 + "\n"
         content += f"{'ckpt':<{ncol}}: {self.ckpt_file}\n"
-        content += f"{'Total':<{ncol}}: {total_sz/1024**2:.3f}MB\n"
+        # content += f"{'Total':<{ncol}}: {total_sz/1024**2:.3f}MB\n"
+        content += f"{'Total':<{ncol}}: {total_sz/1e6:.3f}MB\n"
         content += f"{'nTotal':<{ncol}}: {total:<{ncol},d}\n"
         content += f"nTrainable: {trainable: <{ncol},d}, "
         content += f"nNon-Trainable: {total-trainable: <{ncol},d}\n"
 
         try:
-            flops = self._net_flops()
-            content += f"FLOPS: {flops / 1024**3:.3f}G\n"
+            flops, params = self._net_flops()
+            # content += f"FLOPS: {flops / 1024**3:.3f}G\n"
+            content += f"FLOPS: {flops / 1e9:.3f}G, Params: {params/1e6:.2f}\n"
         except NotImplementedError:
             # content += "\n"
             pass
@@ -383,6 +392,7 @@ class Engine(object):
                 self.scheduler.step()
                 self._print("Loss", loss, i)
                 self._save_ckpt(i, is_best=False)
+            self.prediction_per_epoch(i)
 
             self.valid_first = False
             # valid_first is True
@@ -419,6 +429,9 @@ class Engine(object):
             self.writer.add_text(f"Test-{name}", json.dumps(score), epoch)
             self._print(f"Test-{name}", score, epoch)
             print(f"Test-{name}", score, epoch)
+
+    def prediction_per_epoch(self, epoch):
+        return str(self.epoch_pred_dir / str(epoch))
 
     def post_save_ckpt(self, ckpt_dict):
         return ckpt_dict
